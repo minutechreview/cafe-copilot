@@ -1,0 +1,24 @@
+{
+  "name": "cafe-copilot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "web",
+    "agent"
+  ],
+  "scripts": {
+    "lint": "eslint .",
+    "test": "npm test --workspace=agent",
+    "build": "npm run build --workspace=web",
+    "dev:agent": "npm run dev --workspace=agent",
+    "dev:web": "npm run dev --workspace=web",
+    "find-model": "npm run find-model --workspace=agent"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react": "^7.37.5",
+    "globals": "^15.14.0"
+  }
+}
