@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": { "summary": "node cli.mjs" },
+  "dependencies": { "@supabase/supabase-js": "^2.57.4" }
+}
