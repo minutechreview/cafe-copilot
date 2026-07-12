@@ -95,3 +95,16 @@ touches CockroachDB.
 Each track appends dated entries to its own status file at the repo root: what was done,
 verification results, blockers, and any change requested from the other track. Entries must
 be standalone (no "as discussed" references).
+
+## Amendment 1 (2026-07-12, contract owner) — historical timestamps on RPC-driven seed history
+
+Codex-track finding: `close_till_session` / `record_order_adjustment` stamp `now()` and accept
+no historical time, so seeded closures/adjustments clump on the seed date. RESOLUTION: the
+production RPCs stay exactly as they are — no backdating capability will be added to live
+security code for demo convenience. Instead, the Claude-track orchestrator runs a one-time,
+demo-business-scoped SQL fixup on staging after seeding (closed_at = opened_at + 9h30m for
+clumped sessions; adjustment created_at = its order's created_at + 30m). Applied and verified
+2026-07-12: 0 wrong-day sessions, anomalies land on their intended dates (2026-07-04 shortage
+−4,800; 4 refunds on 2026-07-08), aggregate variance unchanged (−5,140) since the cash trigger
+is session-scoped, not time-scoped. If demo-seed is ever re-run with --fresh, request the
+fixup again via STATUS-codex.md.

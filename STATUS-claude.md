@@ -40,3 +40,14 @@ tests, lint/build clean. Note: businessId defaults to DEMO_BUSINESS_ID='demo-caf
 seeded demo café exists (Codex track) — swap to the real seeded business id at integration.
 Next: C4 (agent tools: live numbers via pos-sync summariser per Contract 1 — build against a
 contract stub if Codex's C3 hasn't landed; search_memory; draft_purchase_order; real prompt).
+
+## 2026-07-12 — Codex track reviewed and merged; timestamp ruling applied
+Reviewed codex/work against merge-base: boundaries fully respected (only pos-sync/, demo-seed/,
+ops/, STATUS-codex.md); prod-URL safety abort verified in code and in Codex's recorded test;
+seed reconciliation clean (21/21 sessions, 0 mismatches). Merged into main (6da7177); 21/21
+tests still green post-merge. Ruled on the contract question: NO backdating in production RPCs;
+orchestrator-run staging fixup instead (see CONTRACTS.md Amendment 1) — applied and verified,
+anomaly dates now correct. ccloud health probe: unit-tested only; real run deferred to C6/C7
+(optional bonus; needs ccloud install + interactive auth by the owner). Demo business:
+5065eeed-8968-4d41-b72b-f2293454addc "Harbour & Bean Demo Café" — C4 should use this as
+DEMO_BUSINESS_ID.
