@@ -28,3 +28,15 @@ enablement — not needed; 4.5 is the working choice). Full end-to-end proof exe
 /chat through dev-server.mjs returned a real model reply ("Hey there! I'm Cafe Copilot...").
 C1 is DONE with zero open items. Next: C2 — CockroachDB memory layer (conversations,
 messages, notes, drafts, documents with CREATE VECTOR INDEX, persistence proven live).
+
+## 2026-07-12 — C2 done: CockroachDB is the agent's memory, live-proven
+memory/ workspace: schema (conversations/messages/notes/drafts/documents+VECTOR), migrate,
+store (parameterized SQL, cosine <=> search — all three distance ops probed live, cosine
+chosen to match normalized Titan v2 1024-dim embeddings from amazon.titan-embed-text-v2:0,
+discovered+validated by agent/scripts/find-embedding-model.mjs). Handler persists turns and
+replays last 12 as context; web keeps conversationId in localStorage. verify.mjs ALL PASS
+against the live cluster; two-turn "remember my favourite pastry" proof recorded. 21/21
+tests, lint/build clean. Note: businessId defaults to DEMO_BUSINESS_ID='demo-cafe' until the
+seeded demo café exists (Codex track) — swap to the real seeded business id at integration.
+Next: C4 (agent tools: live numbers via pos-sync summariser per Contract 1 — build against a
+contract stub if Codex's C3 hasn't landed; search_memory; draft_purchase_order; real prompt).
