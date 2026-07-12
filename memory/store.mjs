@@ -140,6 +140,12 @@ export async function saveDraft({ businessId, conversationId = null, kind, paylo
 
 /**
  * Inserts or replaces an embedded document (daily summary, menu item, glossary entry, ...).
+ *
+ * Upsert key: an explicit `id` always wins. Otherwise, when `docDate` is given, the
+ * (business_id, doc_type, doc_date) triple is treated as a natural key — e.g. re-running the
+ * daily-summary backfill for a date that's already embedded updates that row instead of
+ * creating a duplicate. Documents without a docDate (menu items, glossary entries) always
+ * insert a new row, since they have no natural key to dedupe on.
  * @param {{ id?: string, businessId: string, docType: string, docDate?: string|null, content: string, metadata?: object, embedding: number[] }} input
  */
 export async function upsertDocument({
@@ -158,12 +164,21 @@ export async function upsertDocument({
   }
   const vectorLiteral = toVectorLiteral(embedding);
 
-  if (id) {
+  let targetId = id;
+  if (!targetId && docDate) {
+    const { rows: existing } = await getPool().query(
+      'SELECT id FROM documents WHERE business_id = $1 AND doc_type = $2 AND doc_date = $3',
+      [businessId, docType, docDate]
+    );
+    targetId = existing[0]?.id ?? null;
+  }
+
+  if (targetId) {
     const { rows } = await getPool().query(
       `UPSERT INTO documents (id, business_id, doc_type, doc_date, content, metadata, embedding)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
-      [id, businessId, docType, docDate, content, JSON.stringify(metadata), vectorLiteral]
+      [targetId, businessId, docType, docDate, content, JSON.stringify(metadata), vectorLiteral]
     );
     return rows[0].id;
   }

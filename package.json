@@ -17,7 +17,8 @@
     "find-model": "npm run find-model --workspace=agent",
     "find-embedding-model": "npm run find-embedding-model --workspace=agent",
     "memory:migrate": "npm run migrate --workspace=memory",
-    "memory:verify": "npm run verify --workspace=memory"
+    "memory:verify": "npm run verify --workspace=memory",
+    "agent:backfill": "npm run backfill --workspace=agent"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

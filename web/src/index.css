@@ -54,6 +54,17 @@ body {
   display: flex;
 }
 
+.message__stack {
+  display: flex;
+  flex-direction: column;
+  max-width: 80%;
+}
+
+.message__stack .message__bubble,
+.message__stack .draft-card {
+  max-width: 100%;
+}
+
 .message--user {
   justify-content: flex-end;
 }
@@ -85,6 +96,62 @@ body {
 .message__bubble--typing {
   color: #8a7c72;
   font-style: italic;
+}
+
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.suggestions__chip {
+  padding: 0.5rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid #d9cfc4;
+  background: #fff;
+  color: #2b2320;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.suggestions__chip:hover {
+  background: #f0e9e2;
+}
+
+.draft-card {
+  margin-top: 0.5rem;
+  max-width: 80%;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid #e6ddd4;
+  background: #fbf8f4;
+}
+
+.draft-card__title {
+  margin: 0 0 0.35rem;
+  font-weight: 600;
+}
+
+.draft-card__supplier {
+  margin: 0 0 0.35rem;
+  color: #6b5f57;
+}
+
+.draft-card__items {
+  margin: 0 0 0.35rem;
+  padding-left: 1.1rem;
+}
+
+.draft-card__notes {
+  margin: 0 0 0.35rem;
+  color: #6b5f57;
+  font-style: italic;
+}
+
+.draft-card__status {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #6b5f57;
 }
 
 .error-banner {

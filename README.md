@@ -35,14 +35,30 @@ Requires Node 20+ and npm.
    ```
    npm run memory:migrate
    ```
-4. Start the backend and frontend in separate terminals:
+4. Copy the POS staging connection details into the same `.env.local` (see
+   `docs/CONTRACTS.md` for where these come from) and set the seeded demo business id:
+   - `POS_SUPABASE_URL`, `POS_SUPABASE_ANON_KEY` — the POS staging project
+     (`ljnzschozufepfpkzwjy`); the agent refuses to run against any other project ref
+   - `DEMO_BUSINESS_ID` — the seeded demo café's business id, used for both the POS lookup
+     (`get_day_summary`) and the CockroachDB memory rows (notes/drafts/documents)
+   - `DEMO_OWNER_EMAIL` / `DEMO_OWNER_PASSWORD` — optional; default to the demo owner
+     account `demo-seed/` and `pos-sync/` already created and use
+5. Backfill the agent's memory with embedded daily summaries for the seeded date range, so
+   `search_memory` has something to retrieve (idempotent — safe to re-run; re-embeds and
+   updates existing rows instead of duplicating them):
+   ```
+   npm run agent:backfill
+   ```
+6. Start the backend and frontend in separate terminals:
    ```
    npm run dev:agent   # POST /chat on http://localhost:8787
    npm run dev:web     # chat UI on http://localhost:5173, proxies /chat to the agent
    ```
-5. Open http://localhost:5173 and send a message. The conversation id is kept in
+7. Open http://localhost:5173 and send a message. The conversation id is kept in
    `localStorage`, so reloading the page and asking "What did I just ask you?" continues
-   the same conversation — CockroachDB, not the browser tab, is what remembers.
+   the same conversation — CockroachDB, not the browser tab, is what remembers. Try one of
+   the suggested-question chips, or ask about a specific day (e.g. "How was July 4th?") to
+   see the agent call `get_day_summary` against live POS data.
 
 Other useful commands from the repo root:
 - `npm run lint`, `npm test` (agent + memory unit tests), `npm run build` (production web
@@ -51,3 +67,5 @@ Other useful commands from the repo root:
   reads back a conversation, embeds two texts via Bedrock, upserts them as vector-indexed
   documents, vector-searches with a third embedded query, and cleans up its own rows.
   Prints PASS/FAIL per step.
+- `npm run agent:backfill` — embeds a daily-summary document (narrative + key figures) for
+  every date in the seeded demo café's history and upserts it into CockroachDB memory.

@@ -63,3 +63,11 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 
 CREATE VECTOR INDEX IF NOT EXISTS documents_embedding_idx ON documents (embedding);
+
+-- Backs store.mjs's upsertDocument natural-key lookup (business_id, doc_type, doc_date) —
+-- used so re-running the daily-summary backfill updates existing rows instead of duplicating
+-- them. Not declared UNIQUE: doc_date is nullable for non-dated document types (menu items,
+-- glossary entries), and upsertDocument only relies on this index for lookup speed, not for
+-- constraint enforcement.
+CREATE INDEX IF NOT EXISTS documents_business_type_date_idx
+  ON documents (business_id, doc_type, doc_date);

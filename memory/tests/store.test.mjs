@@ -178,6 +178,58 @@ describe('memory/store.mjs', () => {
         upsertDocument({ businessId: 'demo-cafe', docType: 'summary', content: 'x', embedding: [] })
       ).rejects.toThrow('embedding must be a non-empty number array');
     });
+
+    it('re-embedding the same (business_id, doc_type, doc_date) updates the existing row instead of duplicating it', async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [{ id: 'doc-existing' }] }) // natural-key lookup finds a row
+        .mockResolvedValueOnce({ rows: [{ id: 'doc-existing' }] }); // UPSERT INTO by that id
+      const { upsertDocument } = await import('../store.mjs');
+
+      const id = await upsertDocument({
+        businessId: 'demo-cafe',
+        docType: 'daily_summary',
+        docDate: '2026-07-04',
+        content: 're-embedded summary',
+        embedding: [0.9],
+      });
+
+      expect(id).toBe('doc-existing');
+      expect(queryMock).toHaveBeenCalledTimes(2);
+      const [lookupSql, lookupParams] = queryMock.mock.calls[0];
+      expect(lookupSql).toContain('SELECT id FROM documents');
+      expect(lookupParams).toEqual(['demo-cafe', 'daily_summary', '2026-07-04']);
+      const [upsertSql, upsertParams] = queryMock.mock.calls[1];
+      expect(upsertSql).toContain('UPSERT INTO documents');
+      expect(upsertParams[0]).toBe('doc-existing');
+    });
+
+    it('a docDate with no existing row falls through to a fresh INSERT', async () => {
+      queryMock
+        .mockResolvedValueOnce({ rows: [] }) // natural-key lookup finds nothing
+        .mockResolvedValueOnce({ rows: [{ id: 'doc-new' }] }); // plain INSERT
+      const { upsertDocument } = await import('../store.mjs');
+
+      const id = await upsertDocument({
+        businessId: 'demo-cafe',
+        docType: 'daily_summary',
+        docDate: '2026-07-05',
+        content: 'first embedding for this date',
+        embedding: [0.5],
+      });
+
+      expect(id).toBe('doc-new');
+      expect(queryMock).toHaveBeenCalledTimes(2);
+      const [insertSql, insertParams] = queryMock.mock.calls[1];
+      expect(insertSql).toContain('INSERT INTO documents');
+      expect(insertParams).toEqual([
+        'demo-cafe',
+        'daily_summary',
+        '2026-07-05',
+        'first embedding for this date',
+        '{}',
+        '[0.5]',
+      ]);
+    });
   });
 
   describe('searchDocuments', () => {
