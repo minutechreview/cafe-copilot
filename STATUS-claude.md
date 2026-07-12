@@ -111,3 +111,13 @@ tool calls — worth revisiting if a demo question hits the cap in practice. No 
 adapter yet (still dev-server.mjs only) — that's C6 per the phase plan, not attempted here.
 Next: C5 onward per COPILOT_DESIGN.md (seeded demo café already exists from Codex's C-track
 work, so C5 may already be effectively done — worth a status check before starting new work).
+
+## 2026-07-12 — C4 verified and merged by orchestrator
+Independent verification on top of the builder's: 49/49 tests, build clean, and a fresh
+unscripted question ("Which day last month had our biggest cash problem?") answered correctly
+with real figures (July 4, −4,800, expected 34,850 vs counted 30,050) and baseline comparison.
+Flag for C6/C7: the demo owner password has a committed fallback in pos-sync/demo-seed (Codex
+track) — before the repo goes public, either rotate the staging demo account or explicitly
+document it as intentional public demo credentials (RLS confines it to the demo business).
+Remaining phases: C6 (Lambda deploy + public demo URL), C7 (submission kit). C5 done (Codex),
+C3 done (Codex), C1/C2/C4 done (Claude track).
