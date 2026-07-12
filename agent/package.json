@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node dev-server.mjs",
     "test": "vitest run",
-    "find-model": "node scripts/find-model.mjs"
+    "find-model": "node scripts/find-model.mjs",
+    "find-embedding-model": "node scripts/find-embedding-model.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock": "^3.699.0",

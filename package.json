@@ -5,15 +5,19 @@
   "type": "module",
   "workspaces": [
     "web",
-    "agent"
+    "agent",
+    "memory"
   ],
   "scripts": {
     "lint": "eslint .",
-    "test": "npm test --workspace=agent",
+    "test": "npm test --workspace=agent && npm test --workspace=memory",
     "build": "npm run build --workspace=web",
     "dev:agent": "npm run dev --workspace=agent",
     "dev:web": "npm run dev --workspace=web",
-    "find-model": "npm run find-model --workspace=agent"
+    "find-model": "npm run find-model --workspace=agent",
+    "find-embedding-model": "npm run find-embedding-model --workspace=agent",
+    "memory:migrate": "npm run migrate --workspace=memory",
+    "memory:verify": "npm run verify --workspace=memory"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

@@ -27,6 +27,25 @@ export default [
     },
   },
   {
+    files: ['memory/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+  {
+    files: ['memory/tests/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.vitest,
+      },
+    },
+  },
+  {
     files: ['web/src/**/*.{js,jsx}'],
     plugins: { react },
     languageOptions: {

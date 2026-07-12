@@ -1,6 +1,9 @@
 import { useState } from 'react';
 
 const ERROR_MESSAGE = "The copilot couldn't answer just now. Please try again.";
+// Reload-and-remember is the C2 demo moment: the agent's memory lives in CockroachDB, not
+// in this tab, so all this needs to persist client-side is which conversation to continue.
+const CONVERSATION_ID_STORAGE_KEY = 'cafe-copilot:conversationId';
 
 function createId() {
   return typeof crypto !== 'undefined' && crypto.randomUUID
@@ -8,8 +11,27 @@ function createId() {
     : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function readStoredConversationId() {
+  try {
+    return window.localStorage.getItem(CONVERSATION_ID_STORAGE_KEY) || null;
+  } catch {
+    // Private browsing / storage disabled — fall back to a fresh conversation each load.
+    return null;
+  }
+}
+
+function storeConversationId(id) {
+  try {
+    window.localStorage.setItem(CONVERSATION_ID_STORAGE_KEY, id);
+  } catch {
+    // Nothing we can do if storage is unavailable; the chat still works for this tab.
+  }
+}
+
 export default function App() {
-  const [conversationId] = useState(createId);
+  // Null (not a freshly generated id) until either localStorage or the server hands us a
+  // real conversation id — the server is the source of truth for when a conversation exists.
+  const [conversationId, setConversationId] = useState(readStoredConversationId);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -37,6 +59,11 @@ export default function App() {
 
       if (!response.ok || !data?.reply) {
         throw new Error(data?.error || ERROR_MESSAGE);
+      }
+
+      if (data.conversationId && data.conversationId !== conversationId) {
+        setConversationId(data.conversationId);
+        storeConversationId(data.conversationId);
       }
 
       setMessages((prev) => [...prev, { id: createId(), role: 'assistant', text: data.reply }]);
