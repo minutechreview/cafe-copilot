@@ -1,0 +1,254 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-12T15:33:20.527Z",
+  "staging_project_ref": "ljnzschozufepfpkzwjy",
+  "business_id": "5065eeed-8968-4d41-b72b-f2293454addc",
+  "business_name": "Harbour & Bean Demo Café",
+  "owner": {
+    "email": "cafe-copilot-demo@example.com",
+    "user_id": "795b00d5-f00c-42cd-81fb-015664c27484",
+    "password_included": false
+  },
+  "date_range": {
+    "start": "2026-06-22",
+    "end": "2026-07-12",
+    "days": 21
+  },
+  "anomaly_dates": {
+    "big_shortage": "2026-07-04",
+    "refund_heavy": "2026-07-08"
+  },
+  "counts": {
+    "businesses": 1,
+    "business_config": 1,
+    "staff_profiles": 4,
+    "tills": 2,
+    "menu_items": 8,
+    "till_sessions": 21,
+    "orders": 339,
+    "order_items": 461,
+    "order_adjustments": 11,
+    "paid_in_out_events": 6,
+    "no_sale_events": 6,
+    "waste_comp_logs": 7
+  },
+  "reconciliation": {
+    "sessions_checked": 21,
+    "mismatches": 0,
+    "total_expected_cash": 592700,
+    "total_counted_cash": 587560,
+    "total_variance": -5140
+  },
+  "days": [
+    {
+      "date": "2026-06-22",
+      "orders": 13,
+      "refunds": 0,
+      "voids": 0,
+      "expected_cash": 24200,
+      "counted_cash": 24080,
+      "variance": -120,
+      "anomaly": null
+    },
+    {
+      "date": "2026-06-23",
+      "orders": 14,
+      "refunds": 0,
+      "voids": 0,
+      "expected_cash": 25600,
+      "counted_cash": 25550,
+      "variance": -50,
+      "anomaly": null
+    },
+    {
+      "date": "2026-06-24",
+      "orders": 15,
+      "refunds": 1,
+      "voids": 0,
+      "expected_cash": 25350,
+      "counted_cash": 25350,
+      "variance": 0,
+      "anomaly": null
+    },
+    {
+      "date": "2026-06-25",
+      "orders": 16,
+      "refunds": 0,
+      "voids": 0,
+      "expected_cash": 31150,
+      "counted_cash": 31190,
+      "variance": 40,
+      "anomaly": null
+    },
+    {
+      "date": "2026-06-26",
+      "orders": 13,
+      "refunds": 0,
+      "voids": 1,
+      "expected_cash": 24250,
+      "counted_cash": 24325,
+      "variance": 75,
+      "anomaly": null
+    },
+    {
+      "date": "2026-06-27",
+      "orders": 20,
+      "refunds": 0,
+      "voids": 0,
+      "expected_cash": 29950,
+      "counted_cash": 29830,
+      "variance": -120,
+      "anomaly": null
+    },
+    {
+      "date": "2026-06-28",
+      "orders": 21,
+      "refunds": 0,
+      "voids": 0,
+      "expected_cash": 32150,
+      "counted_cash": 32100,
+      "variance": -50,
+      "anomaly": null
+    },
+    {
+      "date": "2026-06-29",
+      "orders": 16,
+      "refunds": 0,
+      "voids": 0,
+      "expected_cash": 31200,
+      "counted_cash": 31200,
+      "variance": 0,
+      "anomaly": null
+    },
+    {
+      "date": "2026-06-30",
+      "orders": 13,
+      "refunds": 1,
+      "voids": 0,
+      "expected_cash": 23850,
+      "counted_cash": 23890,
+      "variance": 40,
+      "anomaly": null
+    },
+    {
+      "date": "2026-07-01",
+      "orders": 14,
+      "refunds": 0,
+      "voids": 0,
+      "expected_cash": 27050,
+      "counted_cash": 27125,
+      "variance": 75,
+      "anomaly": null
+    },
+    {
+      "date": "2026-07-02",
+      "orders": 15,
+      "refunds": 0,
+      "voids": 0,
+      "expected_cash": 25700,
+      "counted_cash": 25580,
+      "variance": -120,
+      "anomaly": null
+    },
+    {
+      "date": "2026-07-03",
+      "orders": 16,
+      "refunds": 0,
+      "voids": 0,
+      "expected_cash": 27450,
+      "counted_cash": 27400,
+      "variance": -50,
+      "anomaly": null
+    },
+    {
+      "date": "2026-07-04",
+      "orders": 19,
+      "refunds": 0,
+      "voids": 1,
+      "expected_cash": 34850,
+      "counted_cash": 30050,
+      "variance": -4800,
+      "anomaly": "big_shortage"
+    },
+    {
+      "date": "2026-07-05",
+      "orders": 20,
+      "refunds": 0,
+      "voids": 0,
+      "expected_cash": 29950,
+      "counted_cash": 29990,
+      "variance": 40,
+      "anomaly": null
+    },
+    {
+      "date": "2026-07-06",
+      "orders": 15,
+      "refunds": 1,
+      "voids": 0,
+      "expected_cash": 26850,
+      "counted_cash": 26925,
+      "variance": 75,
+      "anomaly": null
+    },
+    {
+      "date": "2026-07-07",
+      "orders": 16,
+      "refunds": 0,
+      "voids": 0,
+      "expected_cash": 31200,
+      "counted_cash": 31080,
+      "variance": -120,
+      "anomaly": null
+    },
+    {
+      "date": "2026-07-08",
+      "orders": 13,
+      "refunds": 4,
+      "voids": 0,
+      "expected_cash": 21700,
+      "counted_cash": 21650,
+      "variance": -50,
+      "anomaly": "refund_heavy"
+    },
+    {
+      "date": "2026-07-09",
+      "orders": 14,
+      "refunds": 0,
+      "voids": 0,
+      "expected_cash": 27050,
+      "counted_cash": 27050,
+      "variance": 0,
+      "anomaly": null
+    },
+    {
+      "date": "2026-07-10",
+      "orders": 15,
+      "refunds": 0,
+      "voids": 0,
+      "expected_cash": 25700,
+      "counted_cash": 25740,
+      "variance": 40,
+      "anomaly": null
+    },
+    {
+      "date": "2026-07-11",
+      "orders": 22,
+      "refunds": 0,
+      "voids": 0,
+      "expected_cash": 35000,
+      "counted_cash": 35075,
+      "variance": 75,
+      "anomaly": null
+    },
+    {
+      "date": "2026-07-12",
+      "orders": 19,
+      "refunds": 1,
+      "voids": 1,
+      "expected_cash": 32500,
+      "counted_cash": 32380,
+      "variance": -120,
+      "anomaly": null
+    }
+  ]
+}
