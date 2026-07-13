@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "lint": "eslint .",
-    "test": "npm test --workspace=agent && npm test --workspace=memory",
+    "test": "npm test --workspace=agent && npm test --workspace=memory && npm test --workspace=web",
     "build": "npm run build --workspace=web",
     "dev:agent": "npm run dev --workspace=agent",
     "dev:web": "npm run dev --workspace=web",

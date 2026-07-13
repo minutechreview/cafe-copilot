@@ -98,6 +98,26 @@ body {
   font-style: italic;
 }
 
+/* Assistant bubbles render formatAssistantText's output (paragraphs/lists), not raw text —
+   reset block-element margins to the same vertical rhythm the old pre-wrap plain text had. */
+.message__bubble > p,
+.message__bubble > ul {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.message__bubble > p {
+  padding-left: 0;
+}
+
+.message__bubble > * + * {
+  margin-top: 0.5em;
+}
+
+.message__bubble strong {
+  font-weight: 600;
+}
+
 .suggestions {
   display: flex;
   flex-wrap: wrap;
