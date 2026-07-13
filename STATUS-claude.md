@@ -121,3 +121,13 @@ track) — before the repo goes public, either rotate the staging demo account o
 document it as intentional public demo credentials (RLS confines it to the demo business).
 Remaining phases: C6 (Lambda deploy + public demo URL), C7 (submission kit). C5 done (Codex),
 C3 done (Codex), C1/C2/C4 done (Claude track).
+
+## 2026-07-13 — C4b (owner feedback): streaming + formatting, verified
+Owner tested the live chat and asked for streamed replies, clean formatting (raw ** was
+showing), and a future floating assistant inside the POS manager dashboard. First two are
+DONE and orchestrator-verified (71/71 tests; live SSE curl shows incremental deltas with
+correct figures; formatter is escape-before-transform, XSS-tested). The floating dashboard
+assistant is APPROVED as a post-C6 step: it needs the public backend URL from the Lambda
+deploy; plan is an embeddable widget in the POS dashboard (staging build, demo café) —
+production embedding waits for per-business identity (Phase 12A territory). SSE heartbeat
+note for C6: add keepalive comments for Lambda/proxy idle timeouts.
