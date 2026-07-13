@@ -46,7 +46,12 @@ const ROLE_NAME = 'cafe-copilot-agent-role';
 const FUNCTION_NAME = 'cafe-copilot-agent';
 const ZIP_PATH = path.join(AGENT_DIR, 'dist-lambda', 'function.zip');
 const RUNTIME_CANDIDATES = ['nodejs22.x', 'nodejs20.x'];
-const DEFAULT_CORS_ORIGINS = ['http://localhost:5173', 'https://cafe-copilot.pages.dev'];
+const DEFAULT_CORS_ORIGINS = [
+  'http://localhost:5173',
+  'https://cafe-copilot.pages.dev',
+  // POS staging dashboard hosts the floating copilot widget (post-C6 owner request).
+  'https://phase-8-auth.project-pos.pages.dev',
+];
 // Only these keys from .env.local are needed by the Lambda code (see handler.mjs, tools.mjs,
 // embeddings.mjs, pos-client.mjs, memory/store.mjs) — AWS_* vars are deliberately excluded:
 // AWS_REGION is provided by the Lambda runtime automatically and can't be overridden, and no
