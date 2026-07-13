@@ -2,6 +2,11 @@ import { useState } from 'react';
 import { formatAssistantText } from './format.js';
 
 const ERROR_MESSAGE = "The copilot couldn't answer just now. Please try again.";
+// Defaults to the Vite dev proxy's relative path ('/chat' -> agent/dev-server.mjs, see
+// vite.config.js). A production build sets VITE_CHAT_URL to the deployed Lambda Function URL
+// at build time (see scripts/deploy-lambda.mjs and README.md's Deployment section) so the
+// same code works against either backend without a runtime branch.
+const CHAT_URL = import.meta.env.VITE_CHAT_URL || '/chat';
 // Reload-and-remember is the C2 demo moment: the agent's memory lives in CockroachDB, not
 // in this tab, so all this needs to persist client-side is which conversation to continue.
 const CONVERSATION_ID_STORAGE_KEY = 'cafe-copilot:conversationId';
@@ -98,7 +103,7 @@ export default function App() {
     let sawError = false;
 
     try {
-      const response = await fetch('/chat', {
+      const response = await fetch(CHAT_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text, conversationId }),

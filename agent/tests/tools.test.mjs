@@ -22,17 +22,52 @@ vi.mock('../../memory/store.mjs', () => ({
 
 const CTX = { businessId: 'biz-1', conversationId: 'conv-1' };
 
+/**
+ * Builds a chainable mock mimicking Supabase's PostgrestFilterBuilder: every filter method
+ * returns the same builder, `.maybeSingle()` resolves directly, and the builder itself is
+ * thenable so `await query` resolves to `result` after any chain of filters (matching how
+ * tools.mjs actually awaits these queries without a trailing `.maybeSingle()`).
+ */
+function makeQuery(result) {
+  const builder = {
+    select: vi.fn(() => builder),
+    eq: vi.fn(() => builder),
+    gte: vi.fn(() => builder),
+    lt: vi.fn(() => builder),
+    in: vi.fn(() => builder),
+    order: vi.fn(() => builder),
+    limit: vi.fn(() => builder),
+    maybeSingle: vi.fn(() => Promise.resolve(result)),
+    then: (resolve, reject) => Promise.resolve(result).then(resolve, reject),
+  };
+  return builder;
+}
+
+/** Builds a fake Supabase client whose `.from(table)` returns the matching query from `byTable`. */
+function makeSupabase(byTable) {
+  return {
+    from: vi.fn((table) => {
+      if (!byTable[table]) {
+        throw new Error(`unexpected table in test: ${table}`);
+      }
+      return byTable[table];
+    }),
+  };
+}
+
 describe('agent/tools.mjs', () => {
   beforeEach(() => {
     vi.resetAllMocks();
   });
 
   describe('toolConfig', () => {
-    it('declares the five contracted tools', async () => {
+    it('declares the seven contracted tools', async () => {
       const { toolConfig } = await import('../tools.mjs');
       const names = toolConfig.tools.map((t) => t.toolSpec.name);
       expect(names).toEqual([
         'get_day_summary',
+        'get_staff_performance',
+        'get_waste_log',
         'search_memory',
         'save_note',
         'list_notes',
@@ -81,6 +116,253 @@ describe('agent/tools.mjs', () => {
         await expect(executeTool('get_day_summary', { date: 'not-a-date' }, CTX)).rejects.toThrow(
           'date must be in YYYY-MM-DD format'
         );
+        expect(getPosClientMock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('get_staff_performance', () => {
+      const BUSINESS_QUERY = () => makeQuery({ data: { id: 'biz-1', currency: 'LKR', locale_default: 'en-LK' }, error: null });
+
+      it('builds per-staff sales, shifts, and approved refunds/voids, sorted by total sales', async () => {
+        const sessionsQuery = makeQuery({
+          data: [
+            {
+              id: 's1',
+              staff_id: 'staff-nimal',
+              closed_at: '2026-07-05T10:00:00.000Z',
+              variance: -50,
+              staff_profiles: { name: 'Nimal Silva', role: 'staff' },
+            },
+            {
+              id: 's2',
+              staff_id: 'staff-ruwan',
+              closed_at: '2026-07-06T10:00:00.000Z',
+              variance: 40,
+              staff_profiles: { name: 'Ruwan Jayasinghe', role: 'staff' },
+            },
+          ],
+          error: null,
+        });
+        const ordersQuery = makeQuery({
+          data: [
+            { till_session_id: 's1', total: 2000 },
+            { till_session_id: 's1', total: 3000 },
+            { till_session_id: 's2', total: 12000 },
+          ],
+          error: null,
+        });
+        const adjustmentsQuery = makeQuery({
+          data: [
+            { type: 'refund', amount: 350, approved_by: 'staff-owner', staff_profiles: { name: 'Maya Perera', role: 'owner' } },
+            { type: 'void', amount: 500, approved_by: 'staff-owner', staff_profiles: { name: 'Maya Perera', role: 'owner' } },
+          ],
+          error: null,
+        });
+        const supabase = makeSupabase({
+          businesses: BUSINESS_QUERY(),
+          till_sessions: sessionsQuery,
+          orders: ordersQuery,
+          order_adjustments: adjustmentsQuery,
+        });
+        getPosClientMock.mockResolvedValueOnce(supabase);
+        const { executeTool } = await import('../tools.mjs');
+
+        const result = await executeTool(
+          'get_staff_performance',
+          { start_date: '2026-07-01', end_date: '2026-07-07' },
+          CTX
+        );
+
+        // Business-local (en-LK, +05:30) day boundaries, per pos-sync/summarizer.mjs's rule.
+        expect(sessionsQuery.gte).toHaveBeenCalledWith('opened_at', '2026-06-30T18:30:00.000Z');
+        expect(sessionsQuery.lt).toHaveBeenCalledWith('opened_at', '2026-07-07T18:30:00.000Z');
+        expect(ordersQuery.in).toHaveBeenCalledWith('till_session_id', ['s1', 's2']);
+        expect(adjustmentsQuery.gte).toHaveBeenCalledWith('created_at', '2026-06-30T18:30:00.000Z');
+
+        expect(result).toEqual({
+          range: { start_date: '2026-07-01', end_date: '2026-07-07' },
+          currency: 'LKR',
+          staff: [
+            {
+              name: 'Ruwan Jayasinghe',
+              role: 'staff',
+              total_sales: 12000,
+              order_count: 1,
+              average_transaction_value: 12000,
+              shifts_worked: 1,
+              net_over_short: 40,
+              refunds_approved: { count: 0, value: 0 },
+              voids_approved: { count: 0, value: 0 },
+            },
+            {
+              name: 'Nimal Silva',
+              role: 'staff',
+              total_sales: 5000,
+              order_count: 2,
+              average_transaction_value: 2500,
+              shifts_worked: 1,
+              net_over_short: -50,
+              refunds_approved: { count: 0, value: 0 },
+              voids_approved: { count: 0, value: 0 },
+            },
+            {
+              name: 'Maya Perera',
+              role: 'owner',
+              total_sales: 0,
+              order_count: 0,
+              average_transaction_value: 0,
+              shifts_worked: 0,
+              net_over_short: 0,
+              refunds_approved: { count: 1, value: 350 },
+              voids_approved: { count: 1, value: 500 },
+            },
+          ],
+          totals: { total_sales: 17000, order_count: 3, shifts_worked: 2, net_over_short: -10 },
+        });
+      });
+
+      it('returns a no_activity marker and skips the orders query when no shifts or adjustments exist', async () => {
+        const supabase = makeSupabase({
+          businesses: BUSINESS_QUERY(),
+          till_sessions: makeQuery({ data: [], error: null }),
+          order_adjustments: makeQuery({ data: [], error: null }),
+        });
+        getPosClientMock.mockResolvedValueOnce(supabase);
+        const { executeTool } = await import('../tools.mjs');
+
+        const result = await executeTool(
+          'get_staff_performance',
+          { start_date: '2026-07-01', end_date: '2026-07-01' },
+          CTX
+        );
+
+        expect(supabase.from).not.toHaveBeenCalledWith('orders');
+        expect(result).toMatchObject({ staff: [], no_activity: true });
+      });
+
+      it('rejects a malformed date range without calling POS staging', async () => {
+        const { executeTool } = await import('../tools.mjs');
+        await expect(
+          executeTool('get_staff_performance', { start_date: '2026-07-07', end_date: '2026-07-01' }, CTX)
+        ).rejects.toThrow('end_date must not be before start_date');
+        await expect(
+          executeTool('get_staff_performance', { start_date: 'nope', end_date: '2026-07-01' }, CTX)
+        ).rejects.toThrow('start_date must be in YYYY-MM-DD format');
+        expect(getPosClientMock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('get_waste_log', () => {
+      const BUSINESS_QUERY = () => makeQuery({ data: { id: 'biz-1', currency: 'LKR', locale_default: 'en-LK' }, error: null });
+
+      it('maps entries to plain-language reasons and aggregates totals by reason and by item', async () => {
+        const wasteQuery = makeQuery({
+          data: [
+            {
+              qty: 2,
+              reason_code: 'damaged',
+              logged_by: 'Nimal Silva',
+              timestamp: '2026-07-02T12:30:00.000Z',
+              menu_items: { name: 'Butter Croissant', price: 650 },
+            },
+            {
+              qty: 1,
+              reason_code: 'quality',
+              logged_by: 'Ruwan Jayasinghe',
+              timestamp: '2026-07-03T19:00:00.000Z',
+              menu_items: { name: 'Egg Hopper Plate', price: 1450 },
+            },
+          ],
+          error: null,
+        });
+        const supabase = makeSupabase({ businesses: BUSINESS_QUERY(), waste_comp_logs: wasteQuery });
+        getPosClientMock.mockResolvedValueOnce(supabase);
+        const { executeTool } = await import('../tools.mjs');
+
+        const result = await executeTool(
+          'get_waste_log',
+          { start_date: '2026-07-01', end_date: '2026-07-07' },
+          CTX
+        );
+
+        expect(wasteQuery.gte).toHaveBeenCalledWith('timestamp', '2026-06-30T18:30:00.000Z');
+        expect(wasteQuery.lt).toHaveBeenCalledWith('timestamp', '2026-07-07T18:30:00.000Z');
+
+        expect(result).toEqual({
+          range: { start_date: '2026-07-01', end_date: '2026-07-07' },
+          currency: 'LKR',
+          entries: [
+            {
+              date: '2026-07-02',
+              item: 'Butter Croissant',
+              quantity: 2,
+              reason: 'Damaged',
+              reason_code: 'damaged',
+              approx_value: 1300,
+              logged_by: 'Nimal Silva',
+            },
+            {
+              date: '2026-07-04',
+              item: 'Egg Hopper Plate',
+              quantity: 1,
+              reason: 'Quality issue',
+              reason_code: 'quality',
+              approx_value: 1450,
+              logged_by: 'Ruwan Jayasinghe',
+            },
+          ],
+          totals: {
+            total_events: 2,
+            total_quantity: 3,
+            approx_total_value: 2750,
+            approx_value_note: 'Approximate, based on current menu prices which may have changed since these were logged.',
+            by_reason: [
+              { reason: 'Damaged', reason_code: 'damaged', count: 1, quantity: 2, approx_value: 1300 },
+              { reason: 'Quality issue', reason_code: 'quality', count: 1, quantity: 1, approx_value: 1450 },
+            ],
+            by_item: [
+              { item: 'Butter Croissant', count: 1, quantity: 2, approx_value: 1300 },
+              { item: 'Egg Hopper Plate', count: 1, quantity: 1, approx_value: 1450 },
+            ],
+          },
+        });
+      });
+
+      it('falls back to the raw reason code, "Unknown item", and no logged_by field when data is sparse', async () => {
+        const wasteQuery = makeQuery({
+          data: [{ qty: 1, reason_code: 'mystery', logged_by: null, timestamp: '2026-07-02T12:00:00.000Z', menu_items: null }],
+          error: null,
+        });
+        const supabase = makeSupabase({ businesses: BUSINESS_QUERY(), waste_comp_logs: wasteQuery });
+        getPosClientMock.mockResolvedValueOnce(supabase);
+        const { executeTool } = await import('../tools.mjs');
+
+        const result = await executeTool(
+          'get_waste_log',
+          { start_date: '2026-07-01', end_date: '2026-07-07' },
+          CTX
+        );
+
+        expect(result.entries).toEqual([
+          { date: '2026-07-02', item: 'Unknown item', quantity: 1, reason: 'mystery', reason_code: 'mystery', approx_value: 0 },
+        ]);
+      });
+
+      it('returns a no_activity marker for an empty range', async () => {
+        const supabase = makeSupabase({ businesses: BUSINESS_QUERY(), waste_comp_logs: makeQuery({ data: [], error: null }) });
+        getPosClientMock.mockResolvedValueOnce(supabase);
+        const { executeTool } = await import('../tools.mjs');
+
+        const result = await executeTool('get_waste_log', { start_date: '2026-07-01', end_date: '2026-07-07' }, CTX);
+
+        expect(result).toMatchObject({ entries: [], no_activity: true });
+      });
+
+      it('rejects a malformed date range without calling POS staging', async () => {
+        const { executeTool } = await import('../tools.mjs');
+        await expect(
+          executeTool('get_waste_log', { start_date: '2026-07-01', end_date: 'nope' }, CTX)
+        ).rejects.toThrow('end_date must be in YYYY-MM-DD format');
         expect(getPosClientMock).not.toHaveBeenCalled();
       });
     });

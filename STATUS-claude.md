@@ -131,3 +131,74 @@ assistant is APPROVED as a post-C6 step: it needs the public backend URL from th
 deploy; plan is an embeddable widget in the POS dashboard (staging build, demo café) —
 production embedding waits for per-business identity (Phase 12A territory). SSE heartbeat
 note for C6: add keepalive comments for Lambda/proxy idle timeouts.
+
+## 2026-07-13 — C6 partial: web half deployed, Lambda half BLOCKED on IAM permissions
+Built the full Lambda path: agent/lambda.mjs wraps handler.mjs with awslambda.streamifyResponse
+(RESPONSE_STREAM), lazily opens the SSE stream on first onEvent call so a synchronous
+validation error still gets a real 400/500 (mirrors dev-server.mjs's contract exactly), adds
+`: ping` heartbeat comment lines every 15s while a turn is in flight per the C4b note. 8 new
+unit tests (agent/tests/lambda.test.mjs) cover request parsing, the happy SSE path, malformed
+JSON, and both post-stream-start and pre-stream-start error paths, with `awslambda` stubbed
+(it's a Lambda-runtime-only global — added as an eslint global for that one file, and
+`dist-lambda/` added to eslint ignores + .gitignore since it's a generated bundle).
+agent/scripts/bundle.mjs (esbuild, new devDependency) bundles lambda.mjs + everything it
+imports (handler/tools/embeddings/pos-client + memory/store.mjs + pos-sync/summarizer.mjs,
+read-only import per CONTRACTS.md) into a single 2.0MB ESM file, zipped with the system `zip`
+CLI (no new JS dependency just for zipping); pg-native is the only external (pg's optional
+native addon, not installed, required inside pg's own try/catch). Smoke-tested the actual
+bundle output (not just the source) locally by stubbing the awslambda globals and running a
+real "How was July 4th?" turn through it against live Bedrock + CockroachDB + POS staging —
+correct streamed reply, correct figures, confirming the bundle itself (not just the
+unbundled source) works before attempting any deploy.
+
+agent/scripts/deploy-lambda.mjs (AWS SDK v3: client-iam, client-lambda, client-sts, all new
+devDependencies) implements the full idempotent create-or-update sequence from the brief: IAM
+role + inline policy (bedrock:InvokeModel*, logs:*, scoped to the function's own log group) →
+wait for IAM propagation → Lambda function (nodejs22.x with nodejs20.x fallback, retrying
+through role-not-yet-assumable errors) → PutFunctionConcurrency 5 → Function URL (AuthType
+NONE, InvokeMode RESPONSE_STREAM, CORS for localhost:5173 + cafe-copilot.pages.dev, extra
+origin via CLI arg for a second pass) → AddPermission for public Function URL invoke. Every
+existence check uses Get-by-exact-name and branches on the not-found error, per the brief's
+permission-shape warning — no List* calls anywhere in the script.
+
+BLOCKED: running it against the real `cafe-copilot-dev` credentials in .env.local, every
+single AWS call beyond sts:GetCallerIdentity is denied — not just IAM (iam:GetRole,
+iam:CreateRole) but also plain Lambda reads (lambda:GetFunction, lambda:GetFunctionUrlConfig,
+lambda:PutFunctionConcurrency), all with the same shape: "not authorized to perform: X on
+resource: Y because no identity-based policy allows the X action." Retested iam:GetRole after
+a 20s wait in case of propagation lag — same denial, so this isn't an eventual-consistency
+issue. sts:GetCallerIdentity confirms the credentials are for the right user
+(arn:aws:iam::606065959230:user/cafe-copilot-dev) and Bedrock calls through the exact same
+credentials work fine (proven by the smoke test above), so this is specific to whatever
+policy was meant to grant Lambda/IAM access — it does not appear to be attached, or doesn't
+include these actions. Did not attempt to work around this (no privilege escalation, no
+alternate credentials) — flagging for the owner to fix the `cafe-copilot-dev` policy (or
+attach an existing one) before the Lambda half can be created. deploy-lambda.mjs itself is
+untested against a live AWS account as a result; the logic has been reviewed carefully against
+the brief but "runs cleanly end-to-end on first try" is NOT verified.
+
+Web half deployed independently since it doesn't depend on the blocked AWS user: App.jsx now
+reads `VITE_CHAT_URL` (falls back to '/chat' for the local dev proxy, unchanged default
+behaviour — build/lint/test all still pass with no env var set). Cloudflare Pages project
+`cafe-copilot` created and deployed via wrangler (already authenticated, confirmed `pages
+(write)` scope) — live at https://cafe-copilot.pages.dev (200, title "Cafe Copilot"). This
+deploy used the default build (VITE_CHAT_URL unset → relative '/chat') since no Function URL
+exists yet, so the live chat UI currently has no backend to talk to — needs one more `npm run
+build --workspace=web` + `wrangler pages deploy` once the Lambda half is unblocked and its
+Function URL is known (see README's new Deployment section for the exact two commands).
+
+Verification done: 79/79 unit tests (71 prior + 8 new lambda.test.mjs), lint clean on
+agent/memory/web (dist-lambda/ added to eslint ignores; pos-sync/demo-seed/ops/ still show
+their pre-existing gap, confirmed out of this track's directories), build clean. Pages URL
+verified live over the public internet. Lambda Function URL, its SSE curl proof, and its CORS/
+concurrency verification are all NOT done — blocked as described above.
+
+Next: owner fixes the cafe-copilot-dev IAM policy (needs at minimum iam:GetRole,
+iam:CreateRole, iam:PutRolePolicy scoped to role/cafe-copilot*, and
+lambda:GetFunction/CreateFunction/UpdateFunctionCode/UpdateFunctionConfiguration/
+GetFunctionConfiguration/PutFunctionConcurrency/GetFunctionUrlConfig/CreateFunctionUrlConfig/
+UpdateFunctionUrlConfig/AddPermission scoped to function:cafe-copilot*) or pre-creates the
+role/function by hand — then `npm run bundle --workspace=agent && npm run deploy-lambda
+--workspace=agent` should complete the rest in one shot (idempotent, safe to retry), followed
+by the two-command Pages redeploy with the real Function URL, then the full curl/CORS/
+concurrency verification this phase couldn't reach.
