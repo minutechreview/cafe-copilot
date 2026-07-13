@@ -202,3 +202,17 @@ role/function by hand — then `npm run bundle --workspace=agent && npm run depl
 --workspace=agent` should complete the rest in one shot (idempotent, safe to retry), followed
 by the two-command Pages redeploy with the real Function URL, then the full curl/CORS/
 concurrency verification this phase couldn't reach.
+
+## 2026-07-13 — C6 DONE: publicly deployed and verified; staff/waste tools added
+Live: https://cafe-copilot.pages.dev (Cloudflare Pages) → streaming Lambda Function URL
+(cadrhryuuiho5na3lqtwtwvqny0rhwzg...on.aws, RESPONSE_STREAM, CORS locked to the pages origin +
+localhost). Execution role carries only bedrock:InvokeModel* + its own logs (no static keys in
+Lambda). Two deployment landmines solved and baked into deploy-lambda.mjs: (1) new-account
+concurrency quota makes reserved concurrency impossible — now best-effort with warning;
+(2) since Oct 2025 public Function URLs need lambda:InvokeFunction in the resource policy in
+addition to lambda:InvokeFunctionUrl — sole cause of persistent 403s (function itself proved
+healthy via signed InvokeWithResponseStream). C6b (owner feedback): get_staff_performance +
+get_waste_log tools live and publicly verified ("Ruwan Jayasinghe... LKR 90,550... 52 orders");
+refunds attributed as approved-by, mirroring POS staff-report honesty. 86/86 tests. Remaining:
+C7 (submission kit: public GitHub repo + license visibility check, video, tool docs, optional
+diagram/feedback + optional ccloud probe wiring) and the post-C6 floating dashboard widget.
