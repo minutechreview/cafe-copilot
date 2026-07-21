@@ -12,7 +12,7 @@ vi.mock('../../pos-sync/summarizer.mjs', () => ({
   generateDailySummary: generateDailySummaryMock,
 }));
 vi.mock('../embeddings.mjs', () => ({ embedText: embedTextMock }));
-vi.mock('../pos-client.mjs', () => ({ getPosClient: getPosClientMock }));
+vi.mock('../pos-client.mjs', () => ({ getDemoPosClient: getPosClientMock, getPosClient: getPosClientMock }));
 vi.mock('../../memory/store.mjs', () => ({
   saveNote: saveNoteMock,
   listNotes: listNotesMock,
@@ -99,6 +99,27 @@ describe('agent/tools.mjs', () => {
           date: '2026-07-04',
         });
         expect(result).toEqual({ kpis: { gross_sales: 32400 } });
+      });
+
+      it('uses ctx.posClient when provided and ignores caller input businessId or posClient overrides', async () => {
+        const contextClient = { isContextClient: true };
+        generateDailySummaryMock.mockResolvedValueOnce({ kpis: { gross_sales: 15000 } });
+        const { executeTool } = await import('../tools.mjs');
+
+        const ctxWithClient = { ...CTX, posClient: contextClient };
+        const result = await executeTool(
+          'get_day_summary',
+          { date: '2026-07-04', businessId: 'malicious-biz-id', posClient: {} },
+          ctxWithClient
+        );
+
+        expect(getPosClientMock).not.toHaveBeenCalled();
+        expect(generateDailySummaryMock).toHaveBeenCalledWith({
+          supabase: contextClient,
+          businessId: 'biz-1',
+          date: '2026-07-04',
+        });
+        expect(result).toEqual({ kpis: { gross_sales: 15000 } });
       });
 
       it('returns a no_activity marker instead of null for a quiet day', async () => {

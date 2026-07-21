@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const signInWithPasswordMock = vi.fn();
-const createClientMock = vi.fn().mockImplementation(() => ({
+const createClientMock = vi.fn().mockImplementation((url, key, options) => ({
+  url,
+  key,
+  options,
   auth: { signInWithPassword: signInWithPasswordMock },
 }));
 
@@ -18,68 +21,120 @@ describe('agent/pos-client.mjs', () => {
     signInWithPasswordMock.mockReset();
     process.env.POS_SUPABASE_URL = 'https://ljnzschozufepfpkzwjy.supabase.co';
     process.env.POS_SUPABASE_ANON_KEY = 'anon-key';
-    delete process.env.DEMO_OWNER_EMAIL;
-    delete process.env.DEMO_OWNER_PASSWORD;
+    process.env.DEMO_OWNER_EMAIL = 'demo@cafe.com';
+    process.env.DEMO_OWNER_PASSWORD = 'SecretDemoPassword123!';
   });
 
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  it('signs in with the default demo owner credentials and returns the client', async () => {
-    signInWithPasswordMock.mockResolvedValueOnce({ error: null });
-    const { getPosClient } = await import('../pos-client.mjs');
+  describe('getDemoPosClient', () => {
+    it('signs in with environment demo owner credentials and returns the cached client', async () => {
+      signInWithPasswordMock.mockResolvedValueOnce({ error: null });
+      const { getDemoPosClient } = await import('../pos-client.mjs');
 
-    const supabase = await getPosClient();
+      const supabase = await getDemoPosClient();
 
-    expect(createClientMock).toHaveBeenCalledWith(
-      'https://ljnzschozufepfpkzwjy.supabase.co',
-      'anon-key',
-      { auth: { persistSession: false, autoRefreshToken: false } }
-    );
-    expect(signInWithPasswordMock).toHaveBeenCalledWith({
-      email: 'cafe-copilot-demo@example.com',
-      password: 'CafeCopilot-Demo-2026!',
+      expect(createClientMock).toHaveBeenCalledWith(
+        'https://ljnzschozufepfpkzwjy.supabase.co',
+        'anon-key',
+        { auth: { persistSession: false, autoRefreshToken: false } }
+      );
+      expect(signInWithPasswordMock).toHaveBeenCalledWith({
+        email: 'demo@cafe.com',
+        password: 'SecretDemoPassword123!',
+      });
+      expect(supabase).toBeDefined();
     });
-    expect(supabase).toBeDefined();
+
+    it('caches the demo client across calls (single sign-in)', async () => {
+      signInWithPasswordMock.mockResolvedValue({ error: null });
+      const { getDemoPosClient } = await import('../pos-client.mjs');
+
+      const client1 = await getDemoPosClient();
+      const client2 = await getDemoPosClient();
+
+      expect(createClientMock).toHaveBeenCalledTimes(1);
+      expect(signInWithPasswordMock).toHaveBeenCalledTimes(1);
+      expect(client1).toBe(client2);
+    });
+
+    it('fails safely when DEMO_OWNER_EMAIL or DEMO_OWNER_PASSWORD is missing without revealing values', async () => {
+      delete process.env.DEMO_OWNER_EMAIL;
+      const { getDemoPosClient } = await import('../pos-client.mjs');
+
+      await expect(getDemoPosClient()).rejects.toThrow('Demo credentials missing');
+      expect(signInWithPasswordMock).not.toHaveBeenCalled();
+    });
+
+    it('refuses a non-staging URL before creating a client', async () => {
+      process.env.POS_SUPABASE_URL = 'https://iveygqneqlsxvdvdxxgx.supabase.co';
+      const { getDemoPosClient } = await import('../pos-client.mjs');
+
+      await expect(getDemoPosClient()).rejects.toThrow(/SAFETY ABORT/);
+      expect(createClientMock).not.toHaveBeenCalled();
+    });
+
+    it('wraps a failed sign-in in a plain error and does not cache the failure', async () => {
+      signInWithPasswordMock
+        .mockResolvedValueOnce({ error: { message: 'invalid credentials' } })
+        .mockResolvedValueOnce({ error: null });
+      const { getDemoPosClient } = await import('../pos-client.mjs');
+
+      await expect(getDemoPosClient()).rejects.toThrow('POS staging authentication failed: invalid credentials');
+
+      await expect(getDemoPosClient()).resolves.toBeDefined();
+      expect(signInWithPasswordMock).toHaveBeenCalledTimes(2);
+    });
   });
 
-  it('caches the authenticated client across calls (single sign-in)', async () => {
-    signInWithPasswordMock.mockResolvedValue({ error: null });
-    const { getPosClient } = await import('../pos-client.mjs');
+  describe('getAuthenticatedPosClient', () => {
+    it('creates fresh isolated clients for different caller tokens', async () => {
+      const { getAuthenticatedPosClient } = await import('../pos-client.mjs');
 
-    await getPosClient();
-    await getPosClient();
+      const client1 = getAuthenticatedPosClient('user-token-aaa');
+      const client2 = getAuthenticatedPosClient('user-token-bbb');
 
-    expect(createClientMock).toHaveBeenCalledTimes(1);
-    expect(signInWithPasswordMock).toHaveBeenCalledTimes(1);
-  });
+      expect(client1).not.toBe(client2);
+      expect(createClientMock).toHaveBeenCalledWith(
+        'https://ljnzschozufepfpkzwjy.supabase.co',
+        'anon-key',
+        {
+          auth: { persistSession: false, autoRefreshToken: false },
+          global: { headers: { Authorization: 'Bearer user-token-aaa' } },
+        }
+      );
+      expect(createClientMock).toHaveBeenCalledWith(
+        'https://ljnzschozufepfpkzwjy.supabase.co',
+        'anon-key',
+        {
+          auth: { persistSession: false, autoRefreshToken: false },
+          global: { headers: { Authorization: 'Bearer user-token-bbb' } },
+        }
+      );
+    });
 
-  it('refuses a non-staging URL before ever creating a client', async () => {
-    process.env.POS_SUPABASE_URL = 'https://iveygqneqlsxvdvdxxgx.supabase.co';
-    const { getPosClient } = await import('../pos-client.mjs');
+    it('never calls demo sign-in when creating an authenticated client', async () => {
+      const { getAuthenticatedPosClient } = await import('../pos-client.mjs');
 
-    await expect(getPosClient()).rejects.toThrow(/SAFETY ABORT/);
-    expect(createClientMock).not.toHaveBeenCalled();
-  });
+      getAuthenticatedPosClient('jwt-token-123');
 
-  it('rejects a missing anon key', async () => {
-    delete process.env.POS_SUPABASE_ANON_KEY;
-    const { getPosClient } = await import('../pos-client.mjs');
+      expect(signInWithPasswordMock).not.toHaveBeenCalled();
+    });
 
-    await expect(getPosClient()).rejects.toThrow('POS_SUPABASE_ANON_KEY is not configured');
-  });
+    it('throws error when accessToken is missing or empty', async () => {
+      const { getAuthenticatedPosClient } = await import('../pos-client.mjs');
 
-  it('wraps a failed sign-in in a plain error and does not cache the failure', async () => {
-    signInWithPasswordMock
-      .mockResolvedValueOnce({ error: { message: 'invalid credentials' } })
-      .mockResolvedValueOnce({ error: null });
-    const { getPosClient } = await import('../pos-client.mjs');
+      expect(() => getAuthenticatedPosClient('')).toThrow('accessToken is required for authenticated POS client');
+      expect(() => getAuthenticatedPosClient(null)).toThrow('accessToken is required for authenticated POS client');
+    });
 
-    await expect(getPosClient()).rejects.toThrow('POS staging authentication failed: invalid credentials');
+    it('refuses non-staging URL for authenticated client', async () => {
+      process.env.POS_SUPABASE_URL = 'https://iveygqneqlsxvdvdxxgx.supabase.co';
+      const { getAuthenticatedPosClient } = await import('../pos-client.mjs');
 
-    // Next call retries instead of replaying the cached failure.
-    await expect(getPosClient()).resolves.toBeDefined();
-    expect(signInWithPasswordMock).toHaveBeenCalledTimes(2);
+      expect(() => getAuthenticatedPosClient('jwt-token')).toThrow(/SAFETY ABORT/);
+    });
   });
 });

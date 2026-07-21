@@ -8,8 +8,14 @@
 // here just need to avoid ever building an "instruction-shaped" string into a result.
 import { generateDailySummary } from '../pos-sync/summarizer.mjs';
 import { embedText } from './embeddings.mjs';
-import { getPosClient } from './pos-client.mjs';
+import { getDemoPosClient } from './pos-client.mjs';
 import { saveNote, listNotes, saveDraft, searchDocuments } from '../memory/store.mjs';
+
+async function resolvePosClient(ctx) {
+  if (ctx?.posClient) return ctx.posClient;
+  if (ctx?.supabaseClient) return ctx.supabaseClient;
+  return getDemoPosClient();
+}
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -206,7 +212,7 @@ async function runGetDaySummary(input, ctx) {
   if (typeof date !== 'string' || !DATE_PATTERN.test(date)) {
     throw new Error('date must be in YYYY-MM-DD format');
   }
-  const supabase = await getPosClient();
+  const supabase = await resolvePosClient(ctx);
   const summary = await generateDailySummary({ supabase, businessId: ctx.businessId, date });
   return summary ?? { no_activity: true, date };
 }
@@ -276,7 +282,7 @@ async function fetchRows(query, label) {
 
 async function runGetStaffPerformance(input, ctx) {
   const { startDate, endDate } = validateDateRange(input);
-  const supabase = await getPosClient();
+  const supabase = await resolvePosClient(ctx);
   const business = await fetchBusinessMeta(supabase, ctx.businessId);
   const [start, end] = businessRangeIso(startDate, endDate, business.locale_default);
 
@@ -411,7 +417,7 @@ async function runGetStaffPerformance(input, ctx) {
 
 async function runGetWasteLog(input, ctx) {
   const { startDate, endDate } = validateDateRange(input);
-  const supabase = await getPosClient();
+  const supabase = await resolvePosClient(ctx);
   const business = await fetchBusinessMeta(supabase, ctx.businessId);
   const [start, end] = businessRangeIso(startDate, endDate, business.locale_default);
   const offset = localeOffset(business.locale_default);
