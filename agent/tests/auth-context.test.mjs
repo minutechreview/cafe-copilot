@@ -2,12 +2,21 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   resolveAuthContext,
   AuthContextError,
+  hasAuthorizationHeader,
   getAuthorizationHeader,
   extractBearerToken,
 } from '../auth-context.mjs';
 
-function createMockSupabaseClient({ user = null, userError = null, memberships = [], membershipError = null } = {}) {
-  return {
+function createMockSupabaseClient({
+  user = null,
+  userError = null,
+  memberships = [],
+  membershipError = null,
+  throwOnQuery = false,
+} = {}) {
+  const queryState = { userId: null, businessId: null, roles: null, status: null };
+
+  const client = {
     auth: {
       getUser: vi.fn().mockImplementation(() => {
         if (userError) {
@@ -18,7 +27,6 @@ function createMockSupabaseClient({ user = null, userError = null, memberships =
     },
     from: vi.fn().mockImplementation((table) => {
       if (table === 'business_memberships') {
-        const queryState = { userId: null, businessId: null, roles: null, status: null };
         const chain = {
           select: vi.fn().mockReturnThis(),
           eq: vi.fn().mockImplementation((col, val) => {
@@ -31,7 +39,15 @@ function createMockSupabaseClient({ user = null, userError = null, memberships =
             if (col === 'role') queryState.roles = vals;
             return chain;
           }),
-          then: (resolve) => {
+          then: (resolve, reject) => {
+            if (throwOnQuery) {
+              if (reject) {
+                reject(throwOnQuery);
+              } else {
+                throw throwOnQuery;
+              }
+              return;
+            }
             if (membershipError) {
               resolve({ data: null, error: membershipError });
             } else {
@@ -50,10 +66,25 @@ function createMockSupabaseClient({ user = null, userError = null, memberships =
       }
       return {};
     }),
+    __queryState: queryState,
   };
+
+  return client;
 }
 
 describe('auth-context helper utilities', () => {
+  it('detects authorization header presence case-insensitively', () => {
+    expect(hasAuthorizationHeader({ authorization: '' })).toBe(true);
+    expect(hasAuthorizationHeader({ Authorization: null })).toBe(true);
+    expect(hasAuthorizationHeader({ AUTHORIZATION: 'Bearer token' })).toBe(true);
+    expect(hasAuthorizationHeader({})).toBe(false);
+    expect(hasAuthorizationHeader(null)).toBe(false);
+
+    const headersObj = new Headers();
+    headersObj.set('Authorization', '');
+    expect(hasAuthorizationHeader(headersObj)).toBe(true);
+  });
+
   it('parses Authorization headers case-insensitively', () => {
     expect(getAuthorizationHeader({ authorization: 'Bearer tok-1' })).toBe('Bearer tok-1');
     expect(getAuthorizationHeader({ Authorization: 'Bearer tok-2' })).toBe('Bearer tok-2');
@@ -83,7 +114,7 @@ describe('resolveAuthContext - authenticated mode', () => {
   const validBusinessId = 'biz-uuid-456';
   const secretToken = 'secret-jwt-token-999';
 
-  it('resolves a valid owner principal successfully', async () => {
+  it('resolves a valid owner principal and asserts query filters', async () => {
     const supabaseClient = createMockSupabaseClient({
       user: validUser,
       memberships: [{ role: 'owner', status: 'active' }],
@@ -105,6 +136,12 @@ describe('resolveAuthContext - authenticated mode', () => {
       accessToken: secretToken,
     });
     expect(supabaseClient.auth.getUser).toHaveBeenCalledWith(secretToken);
+    expect(supabaseClient.__queryState).toEqual({
+      userId: 'user-uuid-123',
+      businessId: 'biz-uuid-456',
+      roles: ['owner', 'manager'],
+      status: 'active',
+    });
   });
 
   it('resolves a valid manager principal successfully with lowercase header', async () => {
@@ -125,6 +162,30 @@ describe('resolveAuthContext - authenticated mode', () => {
     expect(principal.userId).toBe('user-uuid-123');
     expect(principal.businessId).toBe('biz-uuid-456');
     expect(principal.accessToken).toBe(secretToken);
+  });
+
+  it('denies cross-tenant requests when user belongs to biz-1 but requests biz-2', async () => {
+    const supabaseClient = createMockSupabaseClient({
+      user: validUser,
+      memberships: [], // Query for requested business_id 'biz-2' returns no rows
+    });
+
+    await expect(
+      resolveAuthContext(
+        {
+          headers: { authorization: `Bearer ${secretToken}` },
+          mode: 'authenticated',
+          businessId: 'biz-2',
+        },
+        { supabaseClient }
+      )
+    ).rejects.toMatchObject({
+      status: 403,
+      message: expect.stringMatching(/Access denied/i),
+    });
+
+    expect(supabaseClient.__queryState.businessId).toBe('biz-2');
+    expect(supabaseClient.__queryState.userId).toBe('user-uuid-123');
   });
 
   it('throws 400 Bad Request if businessId is missing or whitespace', async () => {
@@ -263,6 +324,59 @@ describe('resolveAuthContext - authenticated mode', () => {
       });
     }
   });
+
+  it('returns generic token-free 500 error when client creation/factory throws an exception', async () => {
+    const sensitiveToken = 'SENSITIVE_FACTORY_CANARY_TOKEN_777';
+    const createSupabaseClient = () => {
+      throw new Error(`Factory failed with token ${sensitiveToken}`);
+    };
+
+    try {
+      await resolveAuthContext(
+        {
+          headers: { authorization: `Bearer ${sensitiveToken}` },
+          mode: 'authenticated',
+          businessId: validBusinessId,
+        },
+        { createSupabaseClient }
+      );
+      expect.fail('Should have thrown AuthContextError');
+    } catch (err) {
+      expect(err).toBeInstanceOf(AuthContextError);
+      expect(err.status).toBe(500);
+      expect(err.message).toBe('Failed to initialize authentication client.');
+      expect(err.message).not.toContain(sensitiveToken);
+      expect(Object.values(err)).not.toContain(sensitiveToken);
+      expect(JSON.stringify(err)).not.toContain(sensitiveToken);
+    }
+  });
+
+  it('returns generic token-free 500 error when membership query throws an exception', async () => {
+    const sensitiveToken = 'SENSITIVE_QUERY_CANARY_TOKEN_888';
+    const supabaseClient = createMockSupabaseClient({
+      user: validUser,
+      throwOnQuery: new Error(`Database connection failed with token ${sensitiveToken}`),
+    });
+
+    try {
+      await resolveAuthContext(
+        {
+          headers: { authorization: `Bearer ${sensitiveToken}` },
+          mode: 'authenticated',
+          businessId: validBusinessId,
+        },
+        { supabaseClient }
+      );
+      expect.fail('Should have thrown AuthContextError');
+    } catch (err) {
+      expect(err).toBeInstanceOf(AuthContextError);
+      expect(err.status).toBe(500);
+      expect(err.message).toBe('Failed to query membership access.');
+      expect(err.message).not.toContain(sensitiveToken);
+      expect(Object.values(err)).not.toContain(sensitiveToken);
+      expect(JSON.stringify(err)).not.toContain(sensitiveToken);
+    }
+  });
 });
 
 describe('resolveAuthContext - demo mode', () => {
@@ -278,7 +392,7 @@ describe('resolveAuthContext - demo mode', () => {
     expect(principal.demoSessionId).toMatch(/^demo-session-/);
   });
 
-  it('ignores caller-supplied demoSessionId and conversationId (never uses caller string as demoSessionId)', async () => {
+  it('ignores caller-supplied demoSessionId and conversationId', async () => {
     const principal = await resolveAuthContext({
       mode: 'demo',
       demoSessionId: 'caller-supplied-session-123',
@@ -297,11 +411,21 @@ describe('resolveAuthContext - demo mode', () => {
     expect(principal1.demoSessionId).not.toBe(principal2.demoSessionId);
   });
 
-  it('rejects demo mode request when Authorization header is present', async () => {
+  it('rejects demo mode request when Authorization header field is present (even if empty or null)', async () => {
     await expect(
       resolveAuthContext({
         mode: 'demo',
-        headers: { authorization: 'Bearer any-token' },
+        headers: { authorization: '' },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringMatching(/Demo mode requests must not include an Authorization header/i),
+    });
+
+    await expect(
+      resolveAuthContext({
+        mode: 'demo',
+        headers: { Authorization: null },
       })
     ).rejects.toMatchObject({
       status: 400,
@@ -309,11 +433,21 @@ describe('resolveAuthContext - demo mode', () => {
     });
   });
 
-  it('rejects demo mode request when businessId is present', async () => {
+  it('rejects demo mode request when businessId field is present (including null, empty, or whitespace)', async () => {
     await expect(
       resolveAuthContext({
         mode: 'demo',
-        businessId: 'some-biz-id',
+        businessId: null,
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringMatching(/Demo mode requests must not include a businessId/i),
+    });
+
+    await expect(
+      resolveAuthContext({
+        mode: 'demo',
+        businessId: '',
       })
     ).rejects.toMatchObject({
       status: 400,
@@ -332,6 +466,18 @@ describe('resolveAuthContext - invalid mode & security invariants', () => {
 
   it('throws 400 Bad Request when mode is unrecognized', async () => {
     await expect(resolveAuthContext({ mode: 'admin' })).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringMatching(/Missing or invalid mode/i),
+    });
+  });
+
+  it('throws 400 Bad Request for missing/unknown mode even when Authorization header is present and never enters demo mode', async () => {
+    await expect(
+      resolveAuthContext({
+        headers: { authorization: 'Bearer some-secret-token' },
+        mode: 'unknown',
+      })
+    ).rejects.toMatchObject({
       status: 400,
       message: expect.stringMatching(/Missing or invalid mode/i),
     });

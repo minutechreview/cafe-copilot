@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
  */
 export class AuthContextError extends Error {
   /**
-   * @param {string} message - User-safe error message (never includes tokens)
+   * @param {string} message - User-safe error message (never includes tokens or raw upstream exceptions)
    * @param {number} status - HTTP status code
    */
   constructor(message, status = 400) {
@@ -14,6 +14,19 @@ export class AuthContextError extends Error {
     this.name = 'AuthContextError';
     this.status = status;
   }
+}
+
+/**
+ * Detects if an Authorization header is present in headers (regardless of casing or value).
+ * @param {Object|Headers} headers
+ * @returns {boolean}
+ */
+export function hasAuthorizationHeader(headers) {
+  if (!headers) return false;
+  if (typeof headers.has === 'function') {
+    return headers.has('authorization') || headers.has('Authorization');
+  }
+  return Object.keys(headers).some((key) => key.toLowerCase() === 'authorization');
 }
 
 /**
@@ -50,6 +63,23 @@ export function extractBearerToken(authHeader) {
 }
 
 /**
+ * Checks whether a field exists in input or body object.
+ * @param {Object} input
+ * @param {Object} body
+ * @param {string} fieldName
+ * @returns {boolean}
+ */
+function hasField(input, body, fieldName) {
+  if (input && Object.prototype.hasOwnProperty.call(input, fieldName)) {
+    return true;
+  }
+  if (body && typeof body === 'object' && body !== null && Object.prototype.hasOwnProperty.call(body, fieldName)) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Resolves the authenticated or demo principal context according to Step 1 contract.
  *
  * @param {Object} input - Request input
@@ -57,7 +87,6 @@ export function extractBearerToken(authHeader) {
  * @param {Object} [input.body] - Parsed request body containing mode, businessId, etc.
  * @param {string} [input.mode] - Direct mode override ('authenticated' | 'demo')
  * @param {string} [input.businessId] - Direct businessId override
- * @param {string} [input.demoSessionId] - Optional client-supplied demo session ID
  * @param {Object} [options] - Injectable options for unit testing
  * @param {Object} [options.supabaseClient] - Pre-configured mock Supabase client
  * @param {Function} [options.createSupabaseClient] - Factory for Supabase client
@@ -69,7 +98,6 @@ export async function resolveAuthContext(input = {}, options = {}) {
 
   const mode = input.mode || body.mode;
   const businessId = input.businessId !== undefined ? input.businessId : body.businessId;
-  const authHeader = getAuthorizationHeader(headers);
 
   if (!mode || typeof mode !== 'string') {
     throw new AuthContextError('Missing or invalid mode. Mode must be explicitly "authenticated" or "demo".', 400);
@@ -78,14 +106,13 @@ export async function resolveAuthContext(input = {}, options = {}) {
   const normalizedMode = mode.trim().toLowerCase();
 
   if (normalizedMode === 'demo') {
-    if (authHeader !== null) {
+    if (hasAuthorizationHeader(headers)) {
       throw new AuthContextError('Demo mode requests must not include an Authorization header.', 400);
     }
-    if (businessId !== undefined && businessId !== null && businessId !== '') {
+    if (hasField(input, body, 'businessId')) {
       throw new AuthContextError('Demo mode requests must not include a businessId.', 400);
     }
 
-    // Generate fresh high-entropy server-side demo actor identifier; never trust caller-supplied strings
     const demoSessionId = `demo-session-${randomUUID()}`;
 
     return {
@@ -101,30 +128,35 @@ export async function resolveAuthContext(input = {}, options = {}) {
       throw new AuthContextError('businessId is required in authenticated mode.', 400);
     }
 
-    if (!authHeader) {
+    if (!hasAuthorizationHeader(headers)) {
       throw new AuthContextError('Authorization header is required in authenticated mode.', 401);
     }
 
+    const authHeader = getAuthorizationHeader(headers);
     const token = extractBearerToken(authHeader);
     if (!token) {
       throw new AuthContextError('Malformed Authorization header. Must be "Bearer <token>".', 400);
     }
 
     let supabase;
-    if (options.supabaseClient) {
-      supabase = options.supabaseClient;
-    } else if (options.createSupabaseClient) {
-      supabase = options.createSupabaseClient(token);
-    } else {
-      const url = process.env.POS_SUPABASE_URL;
-      const anonKey = process.env.POS_SUPABASE_ANON_KEY;
-      if (!url || !anonKey) {
-        throw new AuthContextError('POS Supabase configuration missing (POS_SUPABASE_URL / POS_SUPABASE_ANON_KEY).', 500);
+    try {
+      if (options.supabaseClient) {
+        supabase = options.supabaseClient;
+      } else if (options.createSupabaseClient) {
+        supabase = options.createSupabaseClient(token);
+      } else {
+        const url = process.env.POS_SUPABASE_URL;
+        const anonKey = process.env.POS_SUPABASE_ANON_KEY;
+        if (!url || !anonKey) {
+          throw new Error('POS Supabase configuration missing');
+        }
+        supabase = createClient(url, anonKey, {
+          auth: { persistSession: false, autoRefreshToken: false },
+          global: { headers: { Authorization: `Bearer ${token}` } },
+        });
       }
-      supabase = createClient(url, anonKey, {
-        auth: { persistSession: false, autoRefreshToken: false },
-        global: { headers: { Authorization: `Bearer ${token}` } },
-      });
+    } catch {
+      throw new AuthContextError('Failed to initialize authentication client.', 500);
     }
 
     let userResult;
@@ -141,16 +173,25 @@ export async function resolveAuthContext(input = {}, options = {}) {
 
     const userId = userData.user.id;
 
-    // Filter role in ('owner', 'manager') and status = 'active' directly in Supabase query as defense in depth
-    const { data: memberships, error: membershipError } = await supabase
-      .from('business_memberships')
-      .select('role, status')
-      .eq('user_id', userId)
-      .eq('business_id', businessId.trim())
-      .in('role', ['owner', 'manager'])
-      .eq('status', 'active');
+    let memberships;
+    try {
+      const queryResult = await supabase
+        .from('business_memberships')
+        .select('role, status')
+        .eq('user_id', userId)
+        .eq('business_id', businessId.trim())
+        .in('role', ['owner', 'manager'])
+        .eq('status', 'active');
 
-    if (membershipError || !memberships || memberships.length === 0) {
+      if (queryResult.error) {
+        throw queryResult.error;
+      }
+      memberships = queryResult.data;
+    } catch {
+      throw new AuthContextError('Failed to query membership access.', 500);
+    }
+
+    if (!memberships || memberships.length === 0) {
       throw new AuthContextError('Access denied: active owner or manager membership required.', 403);
     }
 
