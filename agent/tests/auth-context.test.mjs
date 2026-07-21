@@ -18,19 +18,31 @@ function createMockSupabaseClient({ user = null, userError = null, memberships =
     },
     from: vi.fn().mockImplementation((table) => {
       if (table === 'business_memberships') {
-        const queryState = { userId: null, businessId: null };
+        const queryState = { userId: null, businessId: null, roles: null, status: null };
         const chain = {
           select: vi.fn().mockReturnThis(),
           eq: vi.fn().mockImplementation((col, val) => {
             if (col === 'user_id') queryState.userId = val;
             if (col === 'business_id') queryState.businessId = val;
+            if (col === 'status') queryState.status = val;
+            return chain;
+          }),
+          in: vi.fn().mockImplementation((col, vals) => {
+            if (col === 'role') queryState.roles = vals;
             return chain;
           }),
           then: (resolve) => {
             if (membershipError) {
               resolve({ data: null, error: membershipError });
             } else {
-              resolve({ data: memberships, error: null });
+              let filtered = memberships;
+              if (queryState.roles && Array.isArray(queryState.roles)) {
+                filtered = filtered.filter((m) => queryState.roles.includes(m.role));
+              }
+              if (queryState.status !== null) {
+                filtered = filtered.filter((m) => m.status === queryState.status);
+              }
+              resolve({ data: filtered, error: null });
             }
           },
         };
@@ -227,30 +239,34 @@ describe('resolveAuthContext - authenticated mode', () => {
     });
   });
 
-  it('throws 403 Forbidden if membership status is inactive or suspended', async () => {
-    const supabaseClient = createMockSupabaseClient({
-      user: validUser,
-      memberships: [{ role: 'owner', status: 'inactive' }],
-    });
+  it('throws 403 Forbidden if membership status is null, missing, empty, inactive, or suspended', async () => {
+    const statusesToDeny = [null, undefined, '', 'inactive', 'suspended', 'pending'];
 
-    await expect(
-      resolveAuthContext(
-        {
-          headers: { authorization: `Bearer ${secretToken}` },
-          mode: 'authenticated',
-          businessId: validBusinessId,
-        },
-        { supabaseClient }
-      )
-    ).rejects.toMatchObject({
-      status: 403,
-      message: expect.stringMatching(/Access denied/i),
-    });
+    for (const statusVal of statusesToDeny) {
+      const supabaseClient = createMockSupabaseClient({
+        user: validUser,
+        memberships: [{ role: 'owner', status: statusVal }],
+      });
+
+      await expect(
+        resolveAuthContext(
+          {
+            headers: { authorization: `Bearer ${secretToken}` },
+            mode: 'authenticated',
+            businessId: validBusinessId,
+          },
+          { supabaseClient }
+        )
+      ).rejects.toMatchObject({
+        status: 403,
+        message: expect.stringMatching(/Access denied/i),
+      });
+    }
   });
 });
 
 describe('resolveAuthContext - demo mode', () => {
-  it('resolves explicit mode: "demo" with opaque demoSessionId', async () => {
+  it('resolves explicit mode: "demo" with high-entropy server-side demoSessionId', async () => {
     const principal = await resolveAuthContext({
       mode: 'demo',
     });
@@ -262,13 +278,23 @@ describe('resolveAuthContext - demo mode', () => {
     expect(principal.demoSessionId).toMatch(/^demo-session-/);
   });
 
-  it('preserves client-supplied demoSessionId or conversationId', async () => {
+  it('ignores caller-supplied demoSessionId and conversationId (never uses caller string as demoSessionId)', async () => {
     const principal = await resolveAuthContext({
       mode: 'demo',
-      demoSessionId: 'custom-demo-session-42',
+      demoSessionId: 'caller-supplied-session-123',
+      conversationId: 'caller-supplied-conv-456',
     });
 
-    expect(principal.demoSessionId).toBe('custom-demo-session-42');
+    expect(principal.demoSessionId).not.toBe('caller-supplied-session-123');
+    expect(principal.demoSessionId).not.toBe('caller-supplied-conv-456');
+    expect(principal.demoSessionId).toMatch(/^demo-session-/);
+  });
+
+  it('generates distinct actor IDs for separate demo resolutions', async () => {
+    const principal1 = await resolveAuthContext({ mode: 'demo' });
+    const principal2 = await resolveAuthContext({ mode: 'demo' });
+
+    expect(principal1.demoSessionId).not.toBe(principal2.demoSessionId);
   });
 
   it('rejects demo mode request when Authorization header is present', async () => {

@@ -85,12 +85,8 @@ export async function resolveAuthContext(input = {}, options = {}) {
       throw new AuthContextError('Demo mode requests must not include a businessId.', 400);
     }
 
-    const demoSessionId =
-      input.demoSessionId ||
-      body.demoSessionId ||
-      input.conversationId ||
-      body.conversationId ||
-      `demo-session-${randomUUID()}`;
+    // Generate fresh high-entropy server-side demo actor identifier; never trust caller-supplied strings
+    const demoSessionId = `demo-session-${randomUUID()}`;
 
     return {
       mode: 'demo',
@@ -145,19 +141,22 @@ export async function resolveAuthContext(input = {}, options = {}) {
 
     const userId = userData.user.id;
 
+    // Filter role in ('owner', 'manager') and status = 'active' directly in Supabase query as defense in depth
     const { data: memberships, error: membershipError } = await supabase
       .from('business_memberships')
       .select('role, status')
       .eq('user_id', userId)
-      .eq('business_id', businessId.trim());
+      .eq('business_id', businessId.trim())
+      .in('role', ['owner', 'manager'])
+      .eq('status', 'active');
 
     if (membershipError || !memberships || memberships.length === 0) {
-      throw new AuthContextError('Access denied: no membership found for requested business.', 403);
+      throw new AuthContextError('Access denied: active owner or manager membership required.', 403);
     }
 
     const activeOwnerOrManager = memberships.some((m) => {
       const isOwnerOrManager = m.role === 'owner' || m.role === 'manager';
-      const isActive = !m.status || m.status === 'active';
+      const isActive = m.status === 'active';
       return isOwnerOrManager && isActive;
     });
 
