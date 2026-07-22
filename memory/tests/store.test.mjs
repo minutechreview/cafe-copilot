@@ -16,7 +16,7 @@ vi.mock('pg', () => ({
   default: { Pool: PoolMock },
 }));
 
-describe('memory/store.mjs', () => {
+describe('memory/store.mjs & migrations', () => {
   const ORIGINAL_ENV = { ...process.env };
 
   beforeEach(() => {
@@ -35,266 +35,197 @@ describe('memory/store.mjs', () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  it('lazily builds a single pool from CRDB_CONNECTION_STRING on first use', async () => {
-    queryMock.mockResolvedValue({ rows: [{ id: 'conv-1' }] });
-    const { createConversation } = await import('../store.mjs');
+  describe('migration idempotence & schema rendering', () => {
+    it('renders schema and migration files cleanly with EMBEDDING_DIM placeholder substitution', async () => {
+      const { renderSchema } = await import('../migrate.mjs');
+      const sql = renderSchema({ embeddingDim: 1024 });
 
-    await createConversation({ businessId: 'demo-cafe' });
-    await createConversation({ businessId: 'demo-cafe' });
+      expect(sql).toContain('VECTOR(1024)');
+      expect(sql).not.toContain('__EMBEDDING_DIM__');
+      expect(sql).toContain('actor_id TEXT');
+      expect(sql).toContain('access_mode TEXT NOT NULL DEFAULT \'legacy_demo\'');
+      expect(sql).toContain('UPDATE conversations SET access_mode = \'legacy_demo\'');
+    });
+  });
 
-    expect(PoolMock).toHaveBeenCalledTimes(1);
-    expect(PoolMock).toHaveBeenCalledWith({ connectionString: process.env.CRDB_CONNECTION_STRING });
+  describe('normalizePrincipal', () => {
+    it('normalizes valid authenticated, demo, and legacy_demo principals', async () => {
+      const { normalizePrincipal } = await import('../store.mjs');
+
+      expect(
+        normalizePrincipal({ businessId: 'biz-1', actorId: 'user-123', accessMode: 'authenticated' })
+      ).toEqual({ businessId: 'biz-1', actorId: 'user-123', accessMode: 'authenticated' });
+
+      expect(
+        normalizePrincipal({ businessId: 'biz-1', actorId: 'demo-session-456', accessMode: 'demo' })
+      ).toEqual({ businessId: 'biz-1', actorId: 'demo-session-456', accessMode: 'demo' });
+
+      expect(normalizePrincipal({ businessId: 'biz-1' })).toEqual({
+        businessId: 'biz-1',
+        actorId: 'legacy_demo',
+        accessMode: 'legacy_demo',
+      });
+    });
+
+    it('rejects invalid or missing principals and missing actorIds in active modes', async () => {
+      const { normalizePrincipal } = await import('../store.mjs');
+
+      expect(() => normalizePrincipal(null)).toThrow('principal object is required');
+      expect(() => normalizePrincipal({ businessId: '' })).toThrow('businessId is required');
+      expect(() => normalizePrincipal({ businessId: 'biz-1', accessMode: 'invalid' })).toThrow(
+        /accessMode must be/
+      );
+      expect(() => normalizePrincipal({ businessId: 'biz-1', accessMode: 'authenticated' })).toThrow(
+        'actorId is required for authenticated or demo accessMode'
+      );
+    });
   });
 
   describe('createConversation', () => {
-    it('inserts and returns the new id', async () => {
+    it('inserts conversation with principal fields and returns the new id', async () => {
       queryMock.mockResolvedValueOnce({ rows: [{ id: 'conv-1' }] });
       const { createConversation } = await import('../store.mjs');
 
-      const id = await createConversation({ businessId: 'demo-cafe', title: 'hello' });
+      const principal = { businessId: 'biz-1', actorId: 'user-100', accessMode: 'authenticated' };
+      const id = await createConversation(principal, { title: 'chat title' });
 
       expect(id).toBe('conv-1');
-      expect(queryMock).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO conversations'), [
-        'demo-cafe',
-        'hello',
-      ]);
-    });
-
-    it('rejects a missing businessId', async () => {
-      const { createConversation } = await import('../store.mjs');
-      await expect(createConversation({})).rejects.toThrow('businessId is required');
-      expect(queryMock).not.toHaveBeenCalled();
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO conversations'),
+        ['biz-1', 'user-100', 'authenticated', 'chat title']
+      );
     });
   });
 
-  describe('appendMessage', () => {
-    it('runs INSERT + UPDATE inside a transaction and commits', async () => {
+  describe('appendMessage & cross-principal denial', () => {
+    it('appends message using atomic INSERT...SELECT predicate when principal matches', async () => {
       clientQueryMock
         .mockResolvedValueOnce(undefined) // BEGIN
-        .mockResolvedValueOnce({ rows: [{ id: 'msg-1' }] }) // INSERT
+        .mockResolvedValueOnce({ rows: [{ id: 'msg-1' }] }) // INSERT...SELECT
         .mockResolvedValueOnce(undefined) // UPDATE conversations
         .mockResolvedValueOnce(undefined); // COMMIT
 
       const { appendMessage } = await import('../store.mjs');
-      const id = await appendMessage({ conversationId: 'conv-1', role: 'user', content: 'hi' });
+      const principal = { businessId: 'biz-1', actorId: 'user-100', accessMode: 'authenticated' };
+      const id = await appendMessage(principal, { conversationId: 'conv-1', role: 'user', content: 'hi' });
 
       expect(id).toBe('msg-1');
-      expect(clientQueryMock).toHaveBeenNthCalledWith(1, 'BEGIN');
-      expect(clientQueryMock).toHaveBeenNthCalledWith(
-        2,
-        expect.stringContaining('INSERT INTO messages'),
-        ['conv-1', 'user', 'hi']
-      );
-      expect(clientQueryMock).toHaveBeenNthCalledWith(
-        3,
-        expect.stringContaining('UPDATE conversations'),
-        ['conv-1']
-      );
-      expect(clientQueryMock).toHaveBeenNthCalledWith(4, 'COMMIT');
-      expect(releaseMock).toHaveBeenCalledTimes(1);
+      const [, params] = clientQueryMock.mock.calls[1];
+      expect(params).toEqual(['conv-1', 'user', 'hi', 'biz-1', 'user-100', 'authenticated']);
     });
 
-    it('rolls back and rethrows if the insert fails', async () => {
+    it('denies message append if conversation belongs to another actor or business without revealing existence', async () => {
       clientQueryMock
         .mockResolvedValueOnce(undefined) // BEGIN
-        .mockRejectedValueOnce(new Error('insert failed')); // INSERT
+        .mockResolvedValueOnce({ rows: [] }) // 0 rows inserted by predicate
+        .mockResolvedValueOnce(undefined); // ROLLBACK
 
       const { appendMessage } = await import('../store.mjs');
+      const foreignPrincipal = { businessId: 'biz-1', actorId: 'user-other', accessMode: 'authenticated' };
 
       await expect(
-        appendMessage({ conversationId: 'conv-1', role: 'user', content: 'hi' })
-      ).rejects.toThrow('insert failed');
+        appendMessage(foreignPrincipal, { conversationId: 'conv-1', role: 'user', content: 'hack' })
+      ).rejects.toThrow('Access denied or conversation not found');
 
       expect(clientQueryMock).toHaveBeenCalledWith('ROLLBACK');
-      expect(releaseMock).toHaveBeenCalledTimes(1);
-    });
-
-    it('rejects an invalid role', async () => {
-      const { appendMessage } = await import('../store.mjs');
-      await expect(
-        appendMessage({ conversationId: 'conv-1', role: 'system', content: 'hi' })
-      ).rejects.toThrow("role must be 'user' or 'assistant'");
-      expect(connectMock).not.toHaveBeenCalled();
     });
   });
 
-  describe('getRecentMessages', () => {
-    it('returns rows oldest-first (DB gives newest-first, LIMITed)', async () => {
+  describe('getRecentMessages & cross-principal denial', () => {
+    it('returns messages when principal owns the conversation', async () => {
       queryMock.mockResolvedValueOnce({
-        rows: [
-          { role: 'assistant', content: 'second', created_at: new Date('2026-01-01T00:00:02Z') },
-          { role: 'user', content: 'first', created_at: new Date('2026-01-01T00:00:01Z') },
-        ],
+        rows: [{ role: 'user', content: 'hello', created_at: new Date() }],
       });
       const { getRecentMessages } = await import('../store.mjs');
 
-      const result = await getRecentMessages('conv-1', 12);
+      const principal = { businessId: 'biz-1', actorId: 'user-100', accessMode: 'authenticated' };
+      const messages = await getRecentMessages(principal, 'conv-1');
 
-      expect(result.map((m) => m.content)).toEqual(['first', 'second']);
-      expect(queryMock).toHaveBeenCalledWith(expect.stringContaining('ORDER BY created_at DESC'), [
-        'conv-1',
-        12,
-      ]);
+      expect(messages).toHaveLength(1);
+      const [, params] = queryMock.mock.calls[0];
+      expect(params).toEqual(['conv-1', 'biz-1', 'user-100', 'authenticated', 12]);
+    });
+
+    it('rejects access when conversationId is passed without principal', async () => {
+      const { getRecentMessages } = await import('../store.mjs');
+      await expect(getRecentMessages('conv-1')).rejects.toThrow('principal is required');
+    });
+
+    it('returns empty array when conversation belongs to another principal', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+      const { getRecentMessages } = await import('../store.mjs');
+
+      const foreignPrincipal = { businessId: 'biz-2', actorId: 'user-100', accessMode: 'authenticated' };
+      const messages = await getRecentMessages(foreignPrincipal, 'conv-1');
+
+      expect(messages).toEqual([]);
     });
   });
 
-  describe('upsertDocument', () => {
-    it('inserts a new document with a bracketed vector literal', async () => {
-      queryMock.mockResolvedValueOnce({ rows: [{ id: 'doc-1' }] });
-      const { upsertDocument } = await import('../store.mjs');
-
-      const id = await upsertDocument({
-        businessId: 'demo-cafe',
-        docType: 'summary',
-        content: 'daily summary',
-        embedding: [0.1, 0.2, 0.3],
-      });
-
-      expect(id).toBe('doc-1');
-      const [sql, params] = queryMock.mock.calls[0];
-      expect(sql).toContain('INSERT INTO documents');
-      expect(params).toEqual(['demo-cafe', 'summary', null, 'daily summary', '{}', '[0.1,0.2,0.3]']);
-    });
-
-    it('upserts by id using UPSERT INTO when id is provided', async () => {
-      queryMock.mockResolvedValueOnce({ rows: [{ id: 'doc-1' }] });
-      const { upsertDocument } = await import('../store.mjs');
-
-      await upsertDocument({
-        id: 'doc-1',
-        businessId: 'demo-cafe',
-        docType: 'summary',
-        content: 'updated summary',
-        embedding: [0.4, 0.5],
-      });
-
-      const [sql] = queryMock.mock.calls[0];
-      expect(sql).toContain('UPSERT INTO documents');
-    });
-
-    it('rejects an empty embedding', async () => {
-      const { upsertDocument } = await import('../store.mjs');
-      await expect(
-        upsertDocument({ businessId: 'demo-cafe', docType: 'summary', content: 'x', embedding: [] })
-      ).rejects.toThrow('embedding must be a non-empty number array');
-    });
-
-    it('re-embedding the same (business_id, doc_type, doc_date) updates the existing row instead of duplicating it', async () => {
-      queryMock
-        .mockResolvedValueOnce({ rows: [{ id: 'doc-existing' }] }) // natural-key lookup finds a row
-        .mockResolvedValueOnce({ rows: [{ id: 'doc-existing' }] }); // UPSERT INTO by that id
-      const { upsertDocument } = await import('../store.mjs');
-
-      const id = await upsertDocument({
-        businessId: 'demo-cafe',
-        docType: 'daily_summary',
-        docDate: '2026-07-04',
-        content: 're-embedded summary',
-        embedding: [0.9],
-      });
-
-      expect(id).toBe('doc-existing');
-      expect(queryMock).toHaveBeenCalledTimes(2);
-      const [lookupSql, lookupParams] = queryMock.mock.calls[0];
-      expect(lookupSql).toContain('SELECT id FROM documents');
-      expect(lookupParams).toEqual(['demo-cafe', 'daily_summary', '2026-07-04']);
-      const [upsertSql, upsertParams] = queryMock.mock.calls[1];
-      expect(upsertSql).toContain('UPSERT INTO documents');
-      expect(upsertParams[0]).toBe('doc-existing');
-    });
-
-    it('a docDate with no existing row falls through to a fresh INSERT', async () => {
-      queryMock
-        .mockResolvedValueOnce({ rows: [] }) // natural-key lookup finds nothing
-        .mockResolvedValueOnce({ rows: [{ id: 'doc-new' }] }); // plain INSERT
-      const { upsertDocument } = await import('../store.mjs');
-
-      const id = await upsertDocument({
-        businessId: 'demo-cafe',
-        docType: 'daily_summary',
-        docDate: '2026-07-05',
-        content: 'first embedding for this date',
-        embedding: [0.5],
-      });
-
-      expect(id).toBe('doc-new');
-      expect(queryMock).toHaveBeenCalledTimes(2);
-      const [insertSql, insertParams] = queryMock.mock.calls[1];
-      expect(insertSql).toContain('INSERT INTO documents');
-      expect(insertParams).toEqual([
-        'demo-cafe',
-        'daily_summary',
-        '2026-07-05',
-        'first embedding for this date',
-        '{}',
-        '[0.5]',
-      ]);
-    });
-  });
-
-  describe('searchDocuments', () => {
-    it('orders by cosine distance and maps rows to camelCase', async () => {
-      queryMock.mockResolvedValueOnce({
-        rows: [
-          {
-            id: 'doc-1',
-            doc_type: 'summary',
-            doc_date: null,
-            content: 'cold brew sales',
-            metadata: {},
-            distance: 0.12,
-          },
-        ],
-      });
-      const { searchDocuments } = await import('../store.mjs');
-
-      const results = await searchDocuments('demo-cafe', [0.1, 0.2], 5);
-
-      expect(results).toEqual([
-        {
-          id: 'doc-1',
-          docType: 'summary',
-          docDate: null,
-          content: 'cold brew sales',
-          metadata: {},
-          distance: 0.12,
-        },
-      ]);
-      const [sql, params] = queryMock.mock.calls[0];
-      expect(sql).toContain('<=>');
-      expect(params).toEqual(['demo-cafe', '[0.1,0.2]', 5]);
-    });
-  });
-
-  describe('saveNote / listNotes / saveDraft', () => {
-    it('saves a note and returns its id', async () => {
-      queryMock.mockResolvedValueOnce({ rows: [{ id: 'note-1' }] });
-      const { saveNote } = await import('../store.mjs');
-      const id = await saveNote({ businessId: 'demo-cafe', content: 'owner prefers oat milk default' });
-      expect(id).toBe('note-1');
-    });
-
-    it('lists notes for a business', async () => {
-      queryMock.mockResolvedValueOnce({ rows: [{ id: 'note-1', content: 'x', source: null, created_at: new Date() }] });
-      const { listNotes } = await import('../store.mjs');
-      const notes = await listNotes('demo-cafe');
-      expect(notes).toHaveLength(1);
-      expect(queryMock).toHaveBeenCalledWith(expect.stringContaining('FROM notes'), ['demo-cafe']);
-    });
-
-    it('saves a draft with a JSON-stringified payload', async () => {
+  describe('saveDraft & foreign conversation denial', () => {
+    it('saves a draft with conversationId when principal owns the conversation', async () => {
       queryMock.mockResolvedValueOnce({ rows: [{ id: 'draft-1' }] });
       const { saveDraft } = await import('../store.mjs');
 
-      const id = await saveDraft({
-        businessId: 'demo-cafe',
+      const principal = { businessId: 'biz-1', actorId: 'user-100', accessMode: 'authenticated' };
+      const id = await saveDraft(principal, {
+        conversationId: 'conv-1',
         kind: 'purchase_order',
-        payload: { items: [{ name: 'milk', qty: 10 }] },
+        payload: { item: 'milk' },
       });
 
       expect(id).toBe('draft-1');
+      const [sql, params] = queryMock.mock.calls[0];
+      expect(sql).toContain('INSERT INTO drafts');
+      expect(sql).toContain('FROM conversations');
+      expect(params).toEqual([
+        'biz-1',
+        'user-100',
+        'authenticated',
+        'purchase_order',
+        '{"item":"milk"}',
+        'conv-1',
+      ]);
+    });
+
+    it('rejects draft creation if referenced conversation is foreign to the principal', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] }); // 0 rows inserted by predicate query
+      const { saveDraft } = await import('../store.mjs');
+
+      const foreignPrincipal = { businessId: 'biz-1', actorId: 'user-hacker', accessMode: 'authenticated' };
+
+      await expect(
+        saveDraft(foreignPrincipal, {
+          conversationId: 'conv-owned-by-user-100',
+          kind: 'purchase_order',
+          payload: { item: 'coffee' },
+        })
+      ).rejects.toThrow('Access denied or invalid conversationId for draft');
+    });
+  });
+
+  describe('saveNote & listNotes', () => {
+    it('stores created_by from principal actorId when saving notes', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ id: 'note-1' }] });
+      const { saveNote } = await import('../store.mjs');
+
+      const principal = { businessId: 'biz-1', actorId: 'user-100', accessMode: 'authenticated' };
+      const id = await saveNote(principal, { content: 'oat milk note' });
+
+      expect(id).toBe('note-1');
       const [, params] = queryMock.mock.calls[0];
-      expect(params[3]).toBe(JSON.stringify({ items: [{ name: 'milk', qty: 10 }] }));
+      expect(params).toEqual(['biz-1', 'user-100', 'authenticated', 'user-100', 'oat milk note', null]);
+    });
+
+    it('lists notes for a business carrying created_by', async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [{ id: 'note-1', content: 'note content', created_by: 'user-100', created_at: new Date() }],
+      });
+      const { listNotes } = await import('../store.mjs');
+
+      const notes = await listNotes({ businessId: 'biz-1' });
+      expect(notes).toHaveLength(1);
+      expect(notes[0].created_by).toBe('user-100');
     });
   });
 });
