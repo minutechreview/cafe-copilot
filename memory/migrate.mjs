@@ -15,11 +15,18 @@ const { Pool } = pg;
 const ZERO_PADDED_REGEX = /^\d{3}_[a-z0-9_-]+\.sql$/i;
 
 export async function runPreflightChecks(client) {
-  const { rows: draftsTableRows } = await client.query(`
-    SELECT 1 FROM information_schema.tables WHERE table_name = 'drafts'
-  `);
+  const { rows: draftsExists } = await client.query(`SELECT to_regclass('public.drafts') AS rel`);
+  const { rows: docsExists } = await client.query(`SELECT to_regclass('public.documents') AS rel`);
 
-  if (draftsTableRows.length > 0) {
+  const hasDrafts = Boolean(draftsExists[0]?.rel);
+  const hasDocs = Boolean(docsExists[0]?.rel);
+
+  if (!hasDrafts && !hasDocs) {
+    return;
+  }
+
+  let invalidDraftsCount = 0;
+  if (hasDrafts) {
     const { rows: draftRows } = await client.query(`
       SELECT COUNT(*)::int AS count
         FROM drafts d
@@ -27,8 +34,11 @@ export async function runPreflightChecks(client) {
        WHERE d.conversation_id IS NOT NULL
          AND (c.id IS NULL OR d.business_id <> c.business_id)
     `);
-    const invalidDraftsCount = draftRows[0]?.count || 0;
+    invalidDraftsCount = draftRows[0]?.count || 0;
+  }
 
+  let duplicateDocsCount = 0;
+  if (hasDocs) {
     const { rows: docRows } = await client.query(`
       SELECT COUNT(*)::int AS count FROM (
         SELECT business_id, doc_type, doc_date
@@ -38,13 +48,13 @@ export async function runPreflightChecks(client) {
         HAVING COUNT(*) > 1
       ) dupes
     `);
-    const duplicateDocsCount = docRows[0]?.count || 0;
+    duplicateDocsCount = docRows[0]?.count || 0;
+  }
 
-    if (invalidDraftsCount > 0 || duplicateDocsCount > 0) {
-      throw new Error(
-        `Preflight check failed: found ${invalidDraftsCount} invalid draft(s) with mismatched conversation references and ${duplicateDocsCount} duplicate dated document group(s). Action required before migration 001.`
-      );
-    }
+  if (invalidDraftsCount > 0 || duplicateDocsCount > 0) {
+    throw new Error(
+      `Preflight check failed: found ${invalidDraftsCount} invalid draft(s) with mismatched conversation references and ${duplicateDocsCount} duplicate dated document group(s). Action required before migration 001.`
+    );
   }
 }
 
@@ -102,7 +112,6 @@ export async function runMigrations({ client, embeddingDim, migrationsDir = path
     }
   }
 
-  // Discover if 001 is pending in schema_migrations
   const migration001File = files.find((f) => f.startsWith('001_'));
   let is001Pending = false;
   if (migration001File) {
@@ -110,7 +119,6 @@ export async function runMigrations({ client, embeddingDim, migrationsDir = path
     is001Pending = rows.length === 0;
   }
 
-  // Run read-only preflight checks BEFORE any schema.sql DDL if 001 is pending
   if (is001Pending) {
     await runPreflightChecks(client);
   }

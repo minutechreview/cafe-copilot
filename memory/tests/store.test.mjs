@@ -55,7 +55,8 @@ describe('memory/store.mjs & migrations', () => {
       clientQueryMock
         .mockResolvedValueOnce({ rows: [] }) // schema_migrations table creation
         .mockResolvedValueOnce({ rows: [] }) // check if 001 is pending -> pending!
-        .mockResolvedValueOnce({ rows: [{ 1: 1 }] }) // drafts table exists check
+        .mockResolvedValueOnce({ rows: [{ rel: 'drafts' }] }) // to_regclass drafts
+        .mockResolvedValueOnce({ rows: [{ rel: 'documents' }] }) // to_regclass docs
         .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight drafts
         .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight docs
         .mockResolvedValueOnce(undefined) // BEGIN schema.sql
@@ -72,11 +73,36 @@ describe('memory/store.mjs & migrations', () => {
 
       expect(clientQueryMock).toHaveBeenNthCalledWith(1, expect.stringContaining('CREATE TABLE IF NOT EXISTS schema_migrations'));
       expect(clientQueryMock).toHaveBeenNthCalledWith(2, 'SELECT version FROM schema_migrations WHERE version = $1', ['001_principal_ownership.sql']);
-      expect(clientQueryMock).toHaveBeenNthCalledWith(3, expect.stringContaining("WHERE table_name = 'drafts'"));
-      expect(clientQueryMock).toHaveBeenNthCalledWith(4, expect.stringContaining('FROM drafts d'));
-      expect(clientQueryMock).toHaveBeenNthCalledWith(5, expect.stringContaining('FROM documents'));
-      expect(clientQueryMock).toHaveBeenNthCalledWith(6, 'BEGIN');
+      expect(clientQueryMock).toHaveBeenNthCalledWith(3, expect.stringContaining("to_regclass('public.drafts')"));
+      expect(clientQueryMock).toHaveBeenNthCalledWith(4, expect.stringContaining("to_regclass('public.documents')"));
+      expect(clientQueryMock).toHaveBeenNthCalledWith(5, expect.stringContaining('FROM drafts d'));
+      expect(clientQueryMock).toHaveBeenNthCalledWith(6, expect.stringContaining('FROM documents'));
+      expect(clientQueryMock).toHaveBeenNthCalledWith(7, 'BEGIN');
       expect(clientQueryMock).toHaveBeenCalledWith('INSERT INTO schema_migrations (version) VALUES ($1)', ['001_principal_ownership.sql']);
+    });
+
+    it('tolerates non-existent tables during fresh-database bootstrap preflight', async () => {
+      const client = { query: clientQueryMock };
+      clientQueryMock
+        .mockResolvedValueOnce({ rows: [] }) // schema_migrations table creation
+        .mockResolvedValueOnce({ rows: [] }) // check if 001 is pending -> pending!
+        .mockResolvedValueOnce({ rows: [{ rel: null }] }) // to_regclass drafts -> null (fresh DB!)
+        .mockResolvedValueOnce({ rows: [{ rel: null }] }) // to_regclass docs -> null (fresh DB!)
+        .mockResolvedValueOnce(undefined) // BEGIN schema.sql
+        .mockResolvedValueOnce(undefined) // schema.sql
+        .mockResolvedValueOnce(undefined) // COMMIT schema.sql
+        .mockResolvedValueOnce({ rows: [] }) // 001 applied check
+        .mockResolvedValueOnce(undefined) // BEGIN 001
+        .mockResolvedValueOnce(undefined) // 001 sql
+        .mockResolvedValueOnce(undefined) // INSERT schema_migrations
+        .mockResolvedValueOnce(undefined); // COMMIT 001
+
+      const { runMigrations } = await import('../migrate.mjs');
+      await runMigrations({ client, embeddingDim: 1536 });
+
+      // Drafts/docs count queries were NOT executed because tables didn't exist yet
+      expect(clientQueryMock).not.toHaveBeenCalledWith(expect.stringContaining('FROM drafts d'));
+      expect(clientQueryMock).toHaveBeenNthCalledWith(5, 'BEGIN');
     });
 
     it('fails preflight check BEFORE schema.sql DDL starts if invalid drafts exist', async () => {
@@ -84,7 +110,8 @@ describe('memory/store.mjs & migrations', () => {
       clientQueryMock
         .mockResolvedValueOnce({ rows: [] }) // schema_migrations table creation
         .mockResolvedValueOnce({ rows: [] }) // check if 001 is pending -> pending!
-        .mockResolvedValueOnce({ rows: [{ 1: 1 }] }) // drafts table exists check
+        .mockResolvedValueOnce({ rows: [{ rel: 'drafts' }] }) // to_regclass drafts
+        .mockResolvedValueOnce({ rows: [{ rel: 'documents' }] }) // to_regclass docs
         .mockResolvedValueOnce({ rows: [{ count: 2 }] }) // preflight drafts finds 2 invalid
         .mockResolvedValueOnce({ rows: [{ count: 0 }] }); // preflight docs
 
@@ -102,7 +129,8 @@ describe('memory/store.mjs & migrations', () => {
       clientQueryMock
         .mockResolvedValueOnce({ rows: [] }) // schema_migrations table creation
         .mockResolvedValueOnce({ rows: [] }) // check if 001 is pending -> pending!
-        .mockResolvedValueOnce({ rows: [{ 1: 1 }] }) // drafts table exists check
+        .mockResolvedValueOnce({ rows: [{ rel: 'drafts' }] }) // to_regclass drafts
+        .mockResolvedValueOnce({ rows: [{ rel: 'documents' }] }) // to_regclass docs
         .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight drafts
         .mockResolvedValueOnce({ rows: [{ count: 3 }] }); // preflight docs finds 3 duplicate groups
 
