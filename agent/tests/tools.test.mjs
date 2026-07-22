@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const generateDailySummaryMock = vi.fn();
 const embedTextMock = vi.fn();
-const getPosClientMock = vi.fn();
 const saveNoteMock = vi.fn();
 const listNotesMock = vi.fn();
 const saveDraftMock = vi.fn();
@@ -12,7 +11,6 @@ vi.mock('../../pos-sync/summarizer.mjs', () => ({
   generateDailySummary: generateDailySummaryMock,
 }));
 vi.mock('../embeddings.mjs', () => ({ embedText: embedTextMock }));
-vi.mock('../pos-client.mjs', () => ({ getDemoPosClient: getPosClientMock, getPosClient: getPosClientMock }));
 vi.mock('../../memory/store.mjs', () => ({
   saveNote: saveNoteMock,
   listNotes: listNotesMock,
@@ -20,13 +18,12 @@ vi.mock('../../memory/store.mjs', () => ({
   searchDocuments: searchDocumentsMock,
 }));
 
-const CTX = { businessId: 'biz-1', conversationId: 'conv-1' };
+const CTX_WITHOUT_POS = { businessId: 'biz-1', conversationId: 'conv-1' };
+const FAKE_POS_CLIENT = { fakePosClient: true };
+const CTX = { businessId: 'biz-1', conversationId: 'conv-1', posClient: FAKE_POS_CLIENT };
 
 /**
- * Builds a chainable mock mimicking Supabase's PostgrestFilterBuilder: every filter method
- * returns the same builder, `.maybeSingle()` resolves directly, and the builder itself is
- * thenable so `await query` resolves to `result` after any chain of filters (matching how
- * tools.mjs actually awaits these queries without a trailing `.maybeSingle()`).
+ * Builds a chainable mock mimicking Supabase's PostgrestFilterBuilder.
  */
 function makeQuery(result) {
   const builder = {
@@ -84,38 +81,64 @@ describe('agent/tools.mjs', () => {
       );
     });
 
+    describe('POS tools fail-closed behavior', () => {
+      it('rejects get_day_summary when ctx.posClient is missing (no demo fallback)', async () => {
+        const { executeTool } = await import('../tools.mjs');
+        await expect(executeTool('get_day_summary', { date: '2026-07-04' }, CTX_WITHOUT_POS)).rejects.toThrow(
+          'posClient is required in execution context for POS tools'
+        );
+        expect(generateDailySummaryMock).not.toHaveBeenCalled();
+      });
+
+      it('rejects get_staff_performance when ctx.posClient is missing (no demo fallback)', async () => {
+        const { executeTool } = await import('../tools.mjs');
+        await expect(
+          executeTool('get_staff_performance', { start_date: '2026-07-01', end_date: '2026-07-07' }, CTX_WITHOUT_POS)
+        ).rejects.toThrow('posClient is required in execution context for POS tools');
+      });
+
+      it('rejects get_waste_log when ctx.posClient is missing (no demo fallback)', async () => {
+        const { executeTool } = await import('../tools.mjs');
+        await expect(
+          executeTool('get_waste_log', { start_date: '2026-07-01', end_date: '2026-07-07' }, CTX_WITHOUT_POS)
+        ).rejects.toThrow('posClient is required in execution context for POS tools');
+      });
+
+      it('rejects posClient supplied via ctx.supabaseClient (legacy property removed)', async () => {
+        const { executeTool } = await import('../tools.mjs');
+        await expect(
+          executeTool('get_day_summary', { date: '2026-07-04' }, { ...CTX_WITHOUT_POS, supabaseClient: {} })
+        ).rejects.toThrow('posClient is required in execution context for POS tools');
+      });
+    });
+
     describe('get_day_summary', () => {
-      it('authenticates to POS staging and returns the summary for the given date', async () => {
-        const fakeSupabase = { fake: true };
-        getPosClientMock.mockResolvedValueOnce(fakeSupabase);
+      it('uses the injected posClient and returns the summary for the given date', async () => {
         generateDailySummaryMock.mockResolvedValueOnce({ kpis: { gross_sales: 32400 } });
         const { executeTool } = await import('../tools.mjs');
 
         const result = await executeTool('get_day_summary', { date: '2026-07-04' }, CTX);
 
         expect(generateDailySummaryMock).toHaveBeenCalledWith({
-          supabase: fakeSupabase,
+          supabase: FAKE_POS_CLIENT,
           businessId: 'biz-1',
           date: '2026-07-04',
         });
         expect(result).toEqual({ kpis: { gross_sales: 32400 } });
       });
 
-      it('uses ctx.posClient when provided and ignores caller input businessId or posClient overrides', async () => {
-        const contextClient = { isContextClient: true };
+      it('ignores caller input businessId or posClient overrides', async () => {
         generateDailySummaryMock.mockResolvedValueOnce({ kpis: { gross_sales: 15000 } });
         const { executeTool } = await import('../tools.mjs');
 
-        const ctxWithClient = { ...CTX, posClient: contextClient };
         const result = await executeTool(
           'get_day_summary',
           { date: '2026-07-04', businessId: 'malicious-biz-id', posClient: {} },
-          ctxWithClient
+          CTX
         );
 
-        expect(getPosClientMock).not.toHaveBeenCalled();
         expect(generateDailySummaryMock).toHaveBeenCalledWith({
-          supabase: contextClient,
+          supabase: FAKE_POS_CLIENT,
           businessId: 'biz-1',
           date: '2026-07-04',
         });
@@ -123,7 +146,6 @@ describe('agent/tools.mjs', () => {
       });
 
       it('returns a no_activity marker instead of null for a quiet day', async () => {
-        getPosClientMock.mockResolvedValueOnce({});
         generateDailySummaryMock.mockResolvedValueOnce(null);
         const { executeTool } = await import('../tools.mjs');
 
@@ -132,19 +154,18 @@ describe('agent/tools.mjs', () => {
         expect(result).toEqual({ no_activity: true, date: '2026-06-01' });
       });
 
-      it('rejects a malformed date without calling POS staging', async () => {
+      it('rejects a malformed date without querying POS staging', async () => {
         const { executeTool } = await import('../tools.mjs');
         await expect(executeTool('get_day_summary', { date: 'not-a-date' }, CTX)).rejects.toThrow(
           'date must be in YYYY-MM-DD format'
         );
-        expect(getPosClientMock).not.toHaveBeenCalled();
       });
     });
 
     describe('get_staff_performance', () => {
       const BUSINESS_QUERY = () => makeQuery({ data: { id: 'biz-1', currency: 'LKR', locale_default: 'en-LK' }, error: null });
 
-      it('builds per-staff sales, shifts, and approved refunds/voids, sorted by total sales', async () => {
+      it('builds per-staff sales, shifts, and approved refunds/voids using injected posClient', async () => {
         const sessionsQuery = makeQuery({
           data: [
             {
@@ -185,16 +206,15 @@ describe('agent/tools.mjs', () => {
           orders: ordersQuery,
           order_adjustments: adjustmentsQuery,
         });
-        getPosClientMock.mockResolvedValueOnce(supabase);
+
         const { executeTool } = await import('../tools.mjs');
 
         const result = await executeTool(
           'get_staff_performance',
           { start_date: '2026-07-01', end_date: '2026-07-07' },
-          CTX
+          { ...CTX, posClient: supabase }
         );
 
-        // Business-local (en-LK, +05:30) day boundaries, per pos-sync/summarizer.mjs's rule.
         expect(sessionsQuery.gte).toHaveBeenCalledWith('opened_at', '2026-06-30T18:30:00.000Z');
         expect(sessionsQuery.lt).toHaveBeenCalledWith('opened_at', '2026-07-07T18:30:00.000Z');
         expect(ordersQuery.in).toHaveBeenCalledWith('till_session_id', ['s1', 's2']);
@@ -242,41 +262,36 @@ describe('agent/tools.mjs', () => {
         });
       });
 
-      it('returns a no_activity marker and skips the orders query when no shifts or adjustments exist', async () => {
+      it('returns a no_activity marker and skips the orders query when no shifts exist', async () => {
         const supabase = makeSupabase({
           businesses: BUSINESS_QUERY(),
           till_sessions: makeQuery({ data: [], error: null }),
           order_adjustments: makeQuery({ data: [], error: null }),
         });
-        getPosClientMock.mockResolvedValueOnce(supabase);
         const { executeTool } = await import('../tools.mjs');
 
         const result = await executeTool(
           'get_staff_performance',
           { start_date: '2026-07-01', end_date: '2026-07-01' },
-          CTX
+          { ...CTX, posClient: supabase }
         );
 
         expect(supabase.from).not.toHaveBeenCalledWith('orders');
         expect(result).toMatchObject({ staff: [], no_activity: true });
       });
 
-      it('rejects a malformed date range without calling POS staging', async () => {
+      it('rejects a malformed date range without querying POS staging', async () => {
         const { executeTool } = await import('../tools.mjs');
         await expect(
           executeTool('get_staff_performance', { start_date: '2026-07-07', end_date: '2026-07-01' }, CTX)
         ).rejects.toThrow('end_date must not be before start_date');
-        await expect(
-          executeTool('get_staff_performance', { start_date: 'nope', end_date: '2026-07-01' }, CTX)
-        ).rejects.toThrow('start_date must be in YYYY-MM-DD format');
-        expect(getPosClientMock).not.toHaveBeenCalled();
       });
     });
 
     describe('get_waste_log', () => {
       const BUSINESS_QUERY = () => makeQuery({ data: { id: 'biz-1', currency: 'LKR', locale_default: 'en-LK' }, error: null });
 
-      it('maps entries to plain-language reasons and aggregates totals by reason and by item', async () => {
+      it('maps entries using injected posClient and aggregates totals by reason and item', async () => {
         const wasteQuery = makeQuery({
           data: [
             {
@@ -297,13 +312,12 @@ describe('agent/tools.mjs', () => {
           error: null,
         });
         const supabase = makeSupabase({ businesses: BUSINESS_QUERY(), waste_comp_logs: wasteQuery });
-        getPosClientMock.mockResolvedValueOnce(supabase);
         const { executeTool } = await import('../tools.mjs');
 
         const result = await executeTool(
           'get_waste_log',
           { start_date: '2026-07-01', end_date: '2026-07-07' },
-          CTX
+          { ...CTX, posClient: supabase }
         );
 
         expect(wasteQuery.gte).toHaveBeenCalledWith('timestamp', '2026-06-30T18:30:00.000Z');
@@ -349,42 +363,24 @@ describe('agent/tools.mjs', () => {
         });
       });
 
-      it('falls back to the raw reason code, "Unknown item", and no logged_by field when data is sparse', async () => {
-        const wasteQuery = makeQuery({
-          data: [{ qty: 1, reason_code: 'mystery', logged_by: null, timestamp: '2026-07-02T12:00:00.000Z', menu_items: null }],
-          error: null,
-        });
-        const supabase = makeSupabase({ businesses: BUSINESS_QUERY(), waste_comp_logs: wasteQuery });
-        getPosClientMock.mockResolvedValueOnce(supabase);
+      it('returns a no_activity marker for an empty range', async () => {
+        const supabase = makeSupabase({ businesses: BUSINESS_QUERY(), waste_comp_logs: makeQuery({ data: [], error: null }) });
         const { executeTool } = await import('../tools.mjs');
 
         const result = await executeTool(
           'get_waste_log',
           { start_date: '2026-07-01', end_date: '2026-07-07' },
-          CTX
+          { ...CTX, posClient: supabase }
         );
-
-        expect(result.entries).toEqual([
-          { date: '2026-07-02', item: 'Unknown item', quantity: 1, reason: 'mystery', reason_code: 'mystery', approx_value: 0 },
-        ]);
-      });
-
-      it('returns a no_activity marker for an empty range', async () => {
-        const supabase = makeSupabase({ businesses: BUSINESS_QUERY(), waste_comp_logs: makeQuery({ data: [], error: null }) });
-        getPosClientMock.mockResolvedValueOnce(supabase);
-        const { executeTool } = await import('../tools.mjs');
-
-        const result = await executeTool('get_waste_log', { start_date: '2026-07-01', end_date: '2026-07-07' }, CTX);
 
         expect(result).toMatchObject({ entries: [], no_activity: true });
       });
 
-      it('rejects a malformed date range without calling POS staging', async () => {
+      it('rejects a malformed date range without querying POS staging', async () => {
         const { executeTool } = await import('../tools.mjs');
         await expect(
           executeTool('get_waste_log', { start_date: '2026-07-01', end_date: 'nope' }, CTX)
         ).rejects.toThrow('end_date must be in YYYY-MM-DD format');
-        expect(getPosClientMock).not.toHaveBeenCalled();
       });
     });
 

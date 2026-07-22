@@ -1,24 +1,41 @@
 import { createClient } from '@supabase/supabase-js';
 
 const STAGING_PROJECT_REF = 'ljnzschozufepfpkzwjy';
+const STAGING_HOSTNAME = `${STAGING_PROJECT_REF}.supabase.co`;
 
 let demoClientPromise;
 
 /**
  * Validates that the Supabase URL points strictly to the allowed POS staging project.
+ * Enforces HTTPS, exact hostname, no user credentials, and default port (443).
  * @param {string} url
  */
 export function assertStagingUrl(url) {
-  let ref = '';
-  try {
-    ref = new URL(url).hostname.split('.')[0];
-  } catch {
-    // ref stays '' — falls through to error below
+  if (!url || typeof url !== 'string' || !url.trim()) {
+    throw new Error(`SAFETY ABORT: staging ${STAGING_HOSTNAME} required; received invalid/missing URL.`);
   }
-  if (ref !== STAGING_PROJECT_REF) {
-    throw new Error(
-      `SAFETY ABORT: staging ${STAGING_PROJECT_REF} required; received ${ref || 'invalid/missing URL'}.`
-    );
+
+  let parsed;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    throw new Error(`SAFETY ABORT: staging ${STAGING_HOSTNAME} required; received invalid/missing URL.`);
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new Error(`SAFETY ABORT: staging ${STAGING_HOSTNAME} required; received non-HTTPS protocol.`);
+  }
+
+  if (parsed.hostname !== STAGING_HOSTNAME) {
+    throw new Error(`SAFETY ABORT: staging ${STAGING_HOSTNAME} required; received ${parsed.hostname || 'invalid/missing URL'}.`);
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new Error(`SAFETY ABORT: staging URL must not contain user credentials.`);
+  }
+
+  if (parsed.port && parsed.port !== '443') {
+    throw new Error(`SAFETY ABORT: staging URL must not specify a custom port.`);
   }
 }
 
@@ -29,23 +46,41 @@ async function authenticateDemo() {
   const url = process.env.POS_SUPABASE_URL;
   const anonKey = process.env.POS_SUPABASE_ANON_KEY;
   assertStagingUrl(url);
-  if (!anonKey) {
+
+  if (!anonKey || typeof anonKey !== 'string' || !anonKey.trim()) {
     throw new Error('POS_SUPABASE_ANON_KEY is not configured');
   }
 
   const email = process.env.DEMO_OWNER_EMAIL;
   const password = process.env.DEMO_OWNER_PASSWORD;
 
-  if (!email || !password) {
+  if (!email || typeof email !== 'string' || !email.trim() || !password || typeof password !== 'string' || !password.trim()) {
     throw new Error('Demo credentials missing (DEMO_OWNER_EMAIL / DEMO_OWNER_PASSWORD environment variables required)');
   }
 
-  const supabase = createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) {
-    throw new Error(`POS staging authentication failed: ${error.message}`);
+  try {
+    const supabase = createClient(url.trim(), anonKey.trim(), {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password: password.trim(),
+    });
+    if (error) {
+      throw new Error('POS staging authentication failed');
+    }
+    return supabase;
+  } catch (err) {
+    if (err instanceof Error && (
+      err.message === 'POS staging authentication failed' ||
+      err.message.startsWith('SAFETY ABORT') ||
+      err.message.includes('not configured') ||
+      err.message.includes('Demo credentials missing')
+    )) {
+      throw err;
+    }
+    throw new Error('POS staging authentication failed');
   }
-  return supabase;
 }
 
 /**
@@ -70,26 +105,27 @@ export function getDemoPosClient() {
  * @returns {import('@supabase/supabase-js').SupabaseClient}
  */
 export function getAuthenticatedPosClient(accessToken) {
-  if (!accessToken || typeof accessToken !== 'string' || accessToken.trim() === '') {
+  if (!accessToken || typeof accessToken !== 'string' || !accessToken.trim()) {
     throw new Error('accessToken is required for authenticated POS client');
   }
 
+  const token = accessToken.trim();
   const url = process.env.POS_SUPABASE_URL;
   const anonKey = process.env.POS_SUPABASE_ANON_KEY;
   assertStagingUrl(url);
-  if (!anonKey) {
+
+  if (!anonKey || typeof anonKey !== 'string' || !anonKey.trim()) {
     throw new Error('POS_SUPABASE_ANON_KEY is not configured');
   }
 
-  return createClient(url, anonKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { Authorization: `Bearer ${accessToken.trim()}` } },
-  });
-}
-
-/** Legacy alias for getDemoPosClient to preserve existing demo compatibility. */
-export function getPosClient() {
-  return getDemoPosClient();
+  try {
+    return createClient(url.trim(), anonKey.trim(), {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+  } catch {
+    throw new Error('Failed to initialize authenticated POS client');
+  }
 }
 
 /** Test-only: clears the cached demo client promise. */
