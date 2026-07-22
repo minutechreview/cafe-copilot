@@ -39,6 +39,7 @@ import {
 import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 import { assertStagingUrl } from '../pos-client.mjs';
 import { applyGuardedFunctionUpdate } from '../deployment-order.mjs';
+import { acquireLambdaDeploymentLock, withDeploymentLock } from '../deployment-lock.mjs';
 
 const AGENT_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const REPO_ROOT = path.dirname(AGENT_DIR);
@@ -289,7 +290,7 @@ async function createFunctionWithFallback({ roleArn, zipBuffer, envVars }) {
   throw lastErr;
 }
 
-async function updateExistingFunction({ roleArn, zipBuffer, envVars, runtime }) {
+async function updateExistingFunction({ roleArn, zipBuffer, envVars, runtime, deploymentLockToken }) {
   await lambdaClient.send(new UpdateFunctionCodeCommand({ FunctionName: FUNCTION_NAME, ZipFile: zipBuffer }));
   console.log('[deploy] updated function code');
   await waitForFunctionReady();
@@ -302,7 +303,9 @@ async function updateExistingFunction({ roleArn, zipBuffer, envVars, runtime }) 
       Runtime: runtime,
       MemorySize: 512,
       Timeout: 55,
-      Environment: { Variables: envVars },
+      // The lock must survive this configuration update. Otherwise a concurrent
+      // deploy could acquire it between code update and concurrency restoration.
+      Environment: { Variables: withDeploymentLock(envVars, deploymentLockToken) },
     })
   );
   console.log('[deploy] updated function configuration');
@@ -414,9 +417,24 @@ async function main() {
     existingRuntime,
     targetConcurrency,
     setConcurrency,
-    updateExisting: async (currentRuntime) => {
+    acquireDeploymentLock: existingRuntime
+      ? async () => {
+        return acquireLambdaDeploymentLock({
+          lambdaClient,
+          functionName: FUNCTION_NAME,
+          waitForReady: waitForFunctionReady,
+        });
+      }
+      : null,
+    updateExisting: async (currentRuntime, deploymentLockToken) => {
       console.log(`[deploy] function ${FUNCTION_NAME} exists (runtime ${currentRuntime}), guarding then updating`);
-      await updateExistingFunction({ roleArn, zipBuffer, envVars, runtime: currentRuntime });
+      await updateExistingFunction({
+        roleArn,
+        zipBuffer,
+        envVars,
+        runtime: currentRuntime,
+        deploymentLockToken,
+      });
     },
     createNew: async () => {
       runtime = await createFunctionWithFallback({ roleArn, zipBuffer, envVars });
