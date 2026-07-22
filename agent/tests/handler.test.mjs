@@ -441,6 +441,23 @@ describe('handler', () => {
   });
 
   describe('streaming events (onEvent)', () => {
+    it('does not emit done when persistence is aborted mid-flight', async () => {
+      const controller = new AbortController();
+      sendMock.mockResolvedValueOnce(textStream('Finished answer'));
+      appendMessageMock.mockImplementationOnce(async () => {
+        controller.abort();
+        const error = new Error('Request deadline exceeded');
+        error.name = 'AbortError';
+        throw error;
+      });
+
+      const events = await runAndCollectEvents({ message: 'Say hello', conversationId: 'abc-123', signal: controller.signal });
+
+      expect(events.some((event) => event.type === 'done')).toBe(false);
+      expect(events.at(-1)).toMatchObject({ type: 'error' });
+      expect(appendMessageMock).toHaveBeenCalledTimes(1);
+    });
+
     it('forwards text deltas immediately, in order, and ends with a done event', async () => {
       sendMock.mockResolvedValueOnce(textStream(['Hello', ', ', 'friend!']));
 
@@ -579,10 +596,12 @@ describe('resolveTrustedChatInput transport boundary', () => {
   });
 
   it('converts an authenticated auth result into a minimal principal and fresh scoped POS client', async () => {
+    const businessId = '11111111-1111-4111-8111-111111111111';
+    const conversationId = '22222222-2222-4222-8222-222222222222';
     const resolveAuth = vi.fn().mockResolvedValue({
       mode: 'authenticated',
       userId: 'user-1',
-      businessId: 'biz-1',
+      businessId,
       accessToken: 'SECRET_TOKEN_SHOULD_NOT_BE_FORWARDED',
     });
     const createAuthenticatedPosClient = vi.fn().mockReturnValue({ scoped: true });
@@ -592,15 +611,15 @@ describe('resolveTrustedChatInput transport boundary', () => {
     const input = await resolveTrustedChatInput(
       {
         headers: { authorization: 'Bearer SECRET_TOKEN_SHOULD_NOT_BE_FORWARDED' },
-        payload: { mode: 'authenticated', message: 'hello', businessId: 'biz-1', conversationId: 'c-1' },
+        payload: { mode: 'authenticated', message: 'hello', businessId, conversationId },
       },
       { resolveAuth, createAuthenticatedPosClient, createDemoPosClient }
     );
 
     expect(input).toEqual({
       message: 'hello',
-      conversationId: 'c-1',
-      principal: { businessId: 'biz-1', actorId: 'user-1', accessMode: 'authenticated' },
+      conversationId,
+      principal: { businessId, actorId: 'user-1', accessMode: 'authenticated' },
       posClient: { scoped: true },
     });
     expect(createAuthenticatedPosClient).toHaveBeenCalledWith('SECRET_TOKEN_SHOULD_NOT_BE_FORWARDED');
@@ -641,7 +660,7 @@ describe('resolveTrustedChatInput transport boundary', () => {
 
     await expect(
       resolveTrustedChatInput(
-        { headers: { authorization: 'Bearer bad-token' }, payload: { mode: 'authenticated', message: 'hello', businessId: 'biz-1' } },
+        { headers: { authorization: 'Bearer bad-token' }, payload: { mode: 'authenticated', message: 'hello', businessId: '11111111-1111-4111-8111-111111111111' } },
         { resolveAuth, createDemoPosClient }
       )
     ).rejects.toMatchObject({ status: 401 });
@@ -658,6 +677,17 @@ describe('resolveTrustedChatInput transport boundary', () => {
     await expect(
       resolveTrustedChatInput({ headers: {}, payload: { message: 'hello' } }, { resolveAuth })
     ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/mode/i) });
+    expect(resolveAuth).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed business and conversation IDs before authentication', async () => {
+    const resolveAuth = vi.fn();
+    const { resolveTrustedChatInput } = await import('../handler.mjs');
+
+    await expect(resolveTrustedChatInput({ payload: { mode: 'authenticated', message: 'hi', businessId: 'not-a-uuid' } }, { resolveAuth }))
+      .rejects.toMatchObject({ statusCode: 400 });
+    await expect(resolveTrustedChatInput({ payload: { mode: 'demo', message: 'hi', conversationId: 'not-a-uuid' } }, { resolveAuth }))
+      .rejects.toMatchObject({ statusCode: 400 });
     expect(resolveAuth).not.toHaveBeenCalled();
   });
 });

@@ -72,7 +72,10 @@ describe('agent/pos-client.mjs', () => {
       expect(createClientMock).toHaveBeenCalledWith(
         'https://ljnzschozufepfpkzwjy.supabase.co',
         'anon-key',
-        { auth: { persistSession: false, autoRefreshToken: false } }
+        {
+          auth: { persistSession: false, autoRefreshToken: false },
+          global: { fetch: expect.any(Function) },
+        }
       );
       expect(signInWithPasswordMock).toHaveBeenCalledWith({
         email: 'demo@cafe.com',
@@ -195,7 +198,7 @@ describe('agent/pos-client.mjs', () => {
         'anon-key',
         {
           auth: { persistSession: false, autoRefreshToken: false },
-          global: { headers: { Authorization: 'Bearer user-token-aaa' } },
+          global: { headers: { Authorization: 'Bearer user-token-aaa' }, fetch: expect.any(Function) },
         }
       );
       expect(createClientMock).toHaveBeenCalledWith(
@@ -203,7 +206,7 @@ describe('agent/pos-client.mjs', () => {
         'anon-key',
         {
           auth: { persistSession: false, autoRefreshToken: false },
-          global: { headers: { Authorization: 'Bearer user-token-bbb' } },
+          global: { headers: { Authorization: 'Bearer user-token-bbb' }, fetch: expect.any(Function) },
         }
       );
     });

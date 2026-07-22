@@ -310,6 +310,31 @@ describe('memory/store.mjs & migrations', () => {
       expect(releaseMock).toHaveBeenCalledTimes(1);
     });
 
+    it('passes AbortSignal to pg and rolls back without commit when aborted mid-transaction', async () => {
+      const controller = new AbortController();
+      clientQueryMock
+        .mockResolvedValueOnce(undefined)
+        .mockImplementationOnce(async () => {
+          controller.abort();
+          return { rows: [{ id: 'msg-1' }] };
+        })
+        .mockResolvedValueOnce(undefined); // ROLLBACK
+
+      const { appendMessage } = await import('../store.mjs');
+      await expect(
+        appendMessage(
+          PRINCIPAL_AUTH,
+          { conversationId: 'conv-1', role: 'user', content: 'hi' },
+          { signal: controller.signal }
+        )
+      ).rejects.toMatchObject({ name: 'AbortError' });
+
+      expect(clientQueryMock.mock.calls[0][0]).toMatchObject({ text: 'BEGIN', signal: controller.signal });
+      expect(clientQueryMock.mock.calls[1][0]).toMatchObject({ signal: controller.signal });
+      expect(clientQueryMock).toHaveBeenCalledWith('ROLLBACK');
+      expect(clientQueryMock.mock.calls.some(([arg]) => arg?.text === 'COMMIT' || arg === 'COMMIT')).toBe(false);
+    });
+
     it('rejects an invalid role or blank content', async () => {
       const { appendMessage } = await import('../store.mjs');
 

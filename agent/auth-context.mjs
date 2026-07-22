@@ -8,6 +8,10 @@ function throwIfAborted(signal) {
   }
 }
 
+function abortAwareFetch(signal) {
+  return (input, init = {}) => fetch(input, { ...init, signal: signal || init.signal });
+}
+
 /**
  * Error thrown during auth context resolution with distinct HTTP status codes (400, 401, 403, 500).
  */
@@ -166,7 +170,10 @@ export async function resolveAuthContext(input = {}, options = {}) {
         assertStagingUrl(url);
         supabase = createClient(url, anonKey, {
           auth: { persistSession: false, autoRefreshToken: false },
-          global: { headers: { Authorization: `Bearer ${token}` } },
+          global: {
+            headers: { Authorization: `Bearer ${token}` },
+            fetch: abortAwareFetch(signal),
+          },
         });
       }
     } catch {

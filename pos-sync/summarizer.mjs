@@ -1,12 +1,7 @@
 const money = value => Number(Number(value || 0).toFixed(2));
 
-export function localeOffset(locale) {
+export function localeOffset(locale, configured = {}) {
   const normalized = String(locale || '').trim().toUpperCase();
-  let configured = {};
-  if (process.env.COPILOT_LOCALE_OFFSETS) {
-    try { configured = JSON.parse(process.env.COPILOT_LOCALE_OFFSETS); }
-    catch { throw new Error('COPILOT_LOCALE_OFFSETS must be valid JSON'); }
-  }
   const configuredOffset = configured[normalized] || configured[String(locale || '').trim()];
   if (configuredOffset !== undefined) {
     if (!/^[+-](?:0\d|1\d|2[0-3]):[0-5]\d$/.test(configuredOffset)) throw new Error(`Invalid configured offset for locale ${locale}`);
@@ -17,8 +12,8 @@ export function localeOffset(locale) {
   return 'Z';
 }
 
-function dayRange(date, locale) {
-  const offset = localeOffset(locale);
+function dayRange(date, locale, localeOffsets) {
+  const offset = localeOffset(locale, localeOffsets);
   const start = new Date(`${date}T00:00:00${offset}`);
   if (Number.isNaN(start.valueOf())) throw new Error('date must be YYYY-MM-DD');
   const end = new Date(start.valueOf() + 86_400_000);
@@ -49,11 +44,11 @@ async function rows(query, label, signal) {
   return data || [];
 }
 
-export async function generateDailySummary({ supabase, businessId, date, signal }) {
+export async function generateDailySummary({ supabase, businessId, date, signal, localeOffsets = {} }) {
   if (!supabase || !businessId || !/^\d{4}-\d{2}-\d{2}$/.test(date || '')) throw new Error('supabase, businessId, and date (YYYY-MM-DD) are required');
   const business = (await rows(supabase.from('businesses').select('id,currency,locale_default').eq('id', businessId).limit(1), 'business', signal))[0];
   if (!business) throw new Error(`Business not found: ${businessId}`);
-  const [start, end] = dayRange(date, business.locale_default);
+  const [start, end] = dayRange(date, business.locale_default, localeOffsets);
   const scoped = (table, column, select) => supabase.from(table).select(select).eq('business_id', businessId).gte(column, start).lt(column, end);
   const [orders, sessions, adjustments, events, noSales] = await Promise.all([
     rows(scoped('orders', 'created_at', 'id,status,payment_method,order_type,total,order_items(qty,unit_price,menu_items(name))'), 'orders', signal),

@@ -9,6 +9,10 @@ function throwIfAborted(signal) {
   if (signal?.aborted) throw new Error('Request deadline exceeded');
 }
 
+function abortAwareFetch(signal) {
+  return (input, init = {}) => fetch(input, { ...init, signal: signal || init.signal });
+}
+
 /**
  * Validates that the Supabase URL points strictly to the allowed POS staging project.
  * Enforces HTTPS, exact hostname, no user credentials, and default port (443).
@@ -46,7 +50,8 @@ export function assertStagingUrl(url) {
 /**
  * Signs in with environment demo credentials to get a cached demo POS client.
  */
-async function authenticateDemo() {
+async function authenticateDemo(signal) {
+  throwIfAborted(signal);
   const url = process.env.POS_SUPABASE_URL;
   const anonKey = process.env.POS_SUPABASE_ANON_KEY;
   assertStagingUrl(url);
@@ -66,6 +71,7 @@ async function authenticateDemo() {
   try {
     supabase = createClient(url, anonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
+      global: { fetch: abortAwareFetch(signal) },
     });
   } catch {
     throw new Error('POS staging client creation failed');
@@ -77,6 +83,7 @@ async function authenticateDemo() {
       email,
       password,
     });
+    throwIfAborted(signal);
   } catch {
     throw new Error('POS staging authentication failed');
   }
@@ -97,7 +104,7 @@ async function authenticateDemo() {
 export async function getDemoPosClient({ signal } = {}) {
   throwIfAborted(signal);
   if (!demoClientPromise) {
-    demoClientPromise = authenticateDemo().catch((err) => {
+    demoClientPromise = authenticateDemo(signal).catch((err) => {
       demoClientPromise = undefined;
       throw err;
     });
@@ -130,7 +137,10 @@ export function getAuthenticatedPosClient(accessToken, { signal } = {}) {
   try {
     return createClient(url, anonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
-      global: { headers: { Authorization: `Bearer ${accessToken}` } },
+      global: {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        fetch: abortAwareFetch(signal),
+      },
     });
   } catch {
     throw new Error('Failed to initialize authenticated POS client');

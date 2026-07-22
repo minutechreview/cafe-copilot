@@ -227,14 +227,28 @@ async function runGetDaySummary(input, ctx) {
   }
   const supabase = getRequiredPosClient(ctx);
   throwIfAborted(ctx.signal);
+  const localeOffsets = configuredLocaleOffsets();
   const summary = await generateDailySummary({
     supabase,
     businessId: ctx.businessId,
     date,
+    ...(localeOffsets ? { localeOffsets } : {}),
     ...(ctx.signal ? { signal: ctx.signal } : {}),
   });
   throwIfAborted(ctx.signal);
   return summary ?? { no_activity: true, date };
+}
+
+function configuredLocaleOffsets() {
+  const raw = process.env.COPILOT_LOCALE_OFFSETS;
+  if (!raw) return undefined;
+  try {
+    const value = JSON.parse(raw);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
+    return value;
+  } catch {
+    throw new Error('COPILOT_LOCALE_OFFSETS must be valid JSON');
+  }
 }
 
 function validateDateRange(input) {
@@ -254,14 +268,7 @@ function validateDateRange(input) {
 
 export function localeOffset(locale) {
   const normalized = String(locale || '').trim().toUpperCase();
-  let configured = {};
-  if (process.env.COPILOT_LOCALE_OFFSETS) {
-    try {
-      configured = JSON.parse(process.env.COPILOT_LOCALE_OFFSETS);
-    } catch {
-      throw new Error('COPILOT_LOCALE_OFFSETS must be valid JSON');
-    }
-  }
+  const configured = configuredLocaleOffsets() || {};
   const configuredOffset = configured[normalized] || configured[String(locale || '').trim()];
   if (configuredOffset !== undefined) {
     if (!/^[+-](?:0\d|1\d|2[0-3]):[0-5]\d$/.test(configuredOffset)) {

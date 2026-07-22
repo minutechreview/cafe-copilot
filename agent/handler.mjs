@@ -74,6 +74,15 @@ function normalizeDemoSessionId(value) {
   return typeof value === 'string' && /^demo-session-[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(value) ? value : null;
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function validateOptionalUuid(value, field) {
+  if (value === undefined || value === null || value === '') return;
+  if (typeof value !== 'string' || !UUID_PATTERN.test(value)) {
+    throw new ValidationError(`${field} must be a valid UUID`);
+  }
+}
+
 /** Extract one opaque demo session cookie without interpreting any other cookie values. */
 export function getDemoSessionIdFromCookie(cookieHeader) {
   if (typeof cookieHeader !== 'string') return null;
@@ -111,6 +120,9 @@ export async function resolveTrustedChatInput(
   if (!['authenticated', 'demo'].includes(requestedMode)) {
     throw new ValidationError('mode is required and must be "authenticated" or "demo"');
   }
+
+  validateOptionalUuid(payload.conversationId, 'conversationId');
+  if (requestedMode === 'authenticated') validateOptionalUuid(payload.businessId, 'businessId');
 
   if (requestedMode === 'demo' && process.env.DEMO_MODE_ENABLED !== 'true') {
     const error = new Error('Demo access is not available.');
@@ -426,8 +438,16 @@ export async function handler({
       conversationId: activeConversationId,
       error: err?.message ?? String(err),
     });
+    if (signal?.aborted) {
+      onEvent({ type: 'error', message: GENERIC_ERROR });
+      return;
+    }
   }
 
+  if (signal?.aborted) {
+    onEvent({ type: 'error', message: GENERIC_ERROR });
+    return;
+  }
   onEvent({ type: 'done', conversationId: activeConversationId, reply });
 }
 
