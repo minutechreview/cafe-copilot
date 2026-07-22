@@ -1,10 +1,6 @@
 // CockroachDB-backed memory store for Café Copilot. All functions go through a single pg
 // Pool built from CRDB_CONNECTION_STRING — this module is the only place in the codebase
 // that talks SQL to the memory tables (schema.sql & migrations own their shape).
-//
-// Note on application compatibility:
-// Full application transport integration of authenticated/demo principals is completed in Step 4.
-// Until Step 4, this branch remains unmerged on feat/memory-principal-ownership.
 import pg from 'pg';
 
 const { Pool } = pg;

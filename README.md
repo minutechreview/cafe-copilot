@@ -151,8 +151,8 @@ Requires Node 20+ and npm.
 2. Create `.env.local` at the repo root (gitignored — never commit it) with these variable
    names (see `docs/CONTRACTS.md` for what each one is and where its value comes from):
    - `CRDB_CONNECTION_STRING` — your CockroachDB cluster connection string (agent memory)
-   - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` — AWS credentials with Bedrock
-     access
+   - `AWS_REGION` — the AWS region used by the local Bedrock client and deployment tooling;
+     local AWS authentication follows the AWS SDK default credential provider chain
    - `BEDROCK_MODEL_ID` — generate automatically with `npm run find-model` (discovers the best
      available Sonnet model on your account and appends it), or set by hand
    - `BEDROCK_EMBEDDING_MODEL_ID`, `EMBEDDING_DIM` — generate automatically with
@@ -163,8 +163,8 @@ Requires Node 20+ and npm.
      the CockroachDB memory rows
    - `DEMO_OWNER_EMAIL` / `DEMO_OWNER_PASSWORD` — optional; default to the demo owner account
      the seed scripts already created (see "Demo credentials" below)
-3. Apply the CockroachDB schema (conversations, messages, notes, drafts, documents + vector
-   index — idempotent, safe to re-run):
+3. **With approval for a database write**, apply the CockroachDB schema (conversations,
+   messages, notes, drafts, documents + vector index — idempotent, safe to re-run):
    ```
    npm run memory:migrate
    ```
@@ -174,8 +174,9 @@ Requires Node 20+ and npm.
    ```
    cd demo-seed && npm install && npm run seed -- --fresh && cd ..
    ```
-5. Backfill the agent's memory with embedded daily summaries for the seeded date range, so
-   `search_memory` has something to retrieve (idempotent — safe to re-run):
+5. **With approval for a database write and Bedrock calls**, backfill the agent's memory with
+   embedded daily summaries for the seeded date range, so `search_memory` has something to
+   retrieve (idempotent, safe to re-run):
    ```
    npm run agent:backfill
    ```
@@ -214,11 +215,36 @@ npm run bundle --workspace=agent          # esbuild -> agent/dist-lambda/{index.
 npm run deploy-lambda --workspace=agent   # idempotent: IAM role, function code, concurrency, Function URL + CORS
 ```
 
-`deploy-lambda.mjs` is safe to re-run any time. Pass a Cloudflare Pages origin as its one CLI
-argument to add it to the Function URL's allowed CORS origins:
-```
-npm run deploy-lambda --workspace=agent -- https://<actual-pages-origin>
-```
+The deploy script first reads the pre-built `agent/dist-lambda/function.zip`; it never bundles
+for you, so run `bundle` immediately before deploying. It reads CORS origins only from
+`WEB_ORIGIN` (required) and the optional comma-separated `COPILOT_ALLOWED_ORIGINS` in
+`.env.local`; it accepts no origin CLI argument.
+
+Configure Lambda variables by category, without placing values in this README:
+
+- Runtime connections and identity: `CRDB_CONNECTION_STRING`, `DEMO_BUSINESS_ID`,
+  `POS_SUPABASE_URL`, `POS_SUPABASE_ANON_KEY`, and optionally `DEMO_OWNER_EMAIL` /
+  `DEMO_OWNER_PASSWORD`.
+- Bedrock: `BEDROCK_MODEL_ID`, `BEDROCK_EMBEDDING_MODEL_ID`, `EMBEDDING_DIM`.
+- Browser access: `WEB_ORIGIN`, optionally `COPILOT_ALLOWED_ORIGINS`.
+- Required guardrails: `DEMO_MODE_ENABLED`, `BEDROCK_MAX_TOKENS`,
+  `COPILOT_MAX_INPUT_CHARS`, `COPILOT_MAX_BODY_BYTES`, `COPILOT_REQUEST_TIMEOUT_MS`,
+  `COPILOT_RATE_LIMIT_MAX_REQUESTS`, `COPILOT_RATE_LIMIT_WINDOW_MS`, and
+  `COPILOT_RESERVED_CONCURRENCY`.
+- Optional CockroachDB pool ceilings: `CRDB_POOL_MAX`, `CRDB_CONNECTION_TIMEOUT_MS`,
+  `CRDB_IDLE_TIMEOUT_MS`, `CRDB_QUERY_TIMEOUT_MS`, and `CRDB_STATEMENT_TIMEOUT_MS`; optional
+  locale configuration: `COPILOT_LOCALE_OFFSETS`.
+
+Local deploy credentials are resolved by the AWS SDK default credential provider chain (for
+example a configured profile or environment supplied to the deploy process). They are distinct
+from the Lambda runtime: the deployer creates/updates the function, while the deployed function
+uses only its IAM execution role for Bedrock and logs. Static AWS credentials are intentionally
+excluded from Lambda environment variables.
+
+For an existing function, deployment uses Lambda `RevisionId` compare-and-swap to acquire a
+fencing lock, first taking reserved concurrency to zero. A conflicting or unconfirmed lock
+fails closed without continuing the update. A crashed guarded deployment may therefore leave
+capacity at zero; recover it deliberately only after confirming the original deployer stopped.
 
 **Web (Cloudflare Pages).** Build with `VITE_CHAT_URL` set to the deployed Function URL, then
 deploy the static output:
@@ -229,6 +255,9 @@ npx wrangler pages deploy web/dist --project-name cafe-copilot --branch main
 ```
 Leaving `VITE_CHAT_URL` unset keeps the build pointed at the relative `/chat` path used by the
 local Vite dev proxy — only set it for a production deploy.
+
+The commands above are deployment instructions, not evidence of a live deployment. Live URLs,
+credentials, migration state, and backfill state must be verified by the approved operator.
 
 ## Demo credentials
 
