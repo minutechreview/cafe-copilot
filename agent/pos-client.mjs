@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 const STAGING_PROJECT_REF = 'ljnzschozufepfpkzwjy';
 const STAGING_HOSTNAME = `${STAGING_PROJECT_REF}.supabase.co`;
 
-let demoClientPromise;
+let demoClient;
 
 function throwIfAborted(signal) {
   if (signal?.aborted) throw new Error('Request deadline exceeded');
@@ -11,6 +11,10 @@ function throwIfAborted(signal) {
 
 function abortAwareFetch(signal) {
   return (input, init = {}) => fetch(input, { ...init, signal: signal || init.signal });
+}
+
+function operationAwareFetch(input, init = {}) {
+  return fetch(input, init);
 }
 
 /**
@@ -88,12 +92,20 @@ async function authenticateDemo(signal) {
     throw new Error('POS staging authentication failed');
   }
 
-  const { error } = result || {};
+  const { data, error } = result || {};
   if (error) {
     throw new Error('POS staging authentication failed');
   }
+  const accessToken = data?.session?.access_token;
+  if (!accessToken) throw new Error('POS staging authentication failed');
 
-  return supabase;
+  return createClient(url, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      fetch: operationAwareFetch,
+    },
+  });
 }
 
 /**
@@ -103,15 +115,13 @@ async function authenticateDemo(signal) {
  */
 export async function getDemoPosClient({ signal } = {}) {
   throwIfAborted(signal);
-  if (!demoClientPromise) {
-    demoClientPromise = authenticateDemo(signal).catch((err) => {
-      demoClientPromise = undefined;
-      throw err;
-    });
+  if (!demoClient) {
+    const authenticatedClient = await authenticateDemo(signal);
+    throwIfAborted(signal);
+    demoClient ||= authenticatedClient;
   }
-  const client = await demoClientPromise;
   throwIfAborted(signal);
-  return client;
+  return demoClient;
 }
 
 /**
@@ -149,5 +159,5 @@ export function getAuthenticatedPosClient(accessToken, { signal } = {}) {
 
 /** Test-only: clears the cached demo client promise. */
 export function resetPosClientForTests() {
-  demoClientPromise = undefined;
+  demoClient = undefined;
 }

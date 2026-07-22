@@ -310,29 +310,28 @@ describe('memory/store.mjs & migrations', () => {
       expect(releaseMock).toHaveBeenCalledTimes(1);
     });
 
-    it('passes AbortSignal to pg and rolls back without commit when aborted mid-transaction', async () => {
+    it('destroys the connection and never commits when an in-flight write is aborted', async () => {
       const controller = new AbortController();
+      let finishInsert;
       clientQueryMock
         .mockResolvedValueOnce(undefined)
-        .mockImplementationOnce(async () => {
-          controller.abort();
-          return { rows: [{ id: 'msg-1' }] };
-        })
-        .mockResolvedValueOnce(undefined); // ROLLBACK
+        .mockImplementationOnce(() => new Promise((resolve) => { finishInsert = resolve; }));
 
       const { appendMessage } = await import('../store.mjs');
-      await expect(
-        appendMessage(
-          PRINCIPAL_AUTH,
-          { conversationId: 'conv-1', role: 'user', content: 'hi' },
-          { signal: controller.signal }
-        )
-      ).rejects.toMatchObject({ name: 'AbortError' });
+      const pending = appendMessage(
+        PRINCIPAL_AUTH,
+        { conversationId: 'conv-1', role: 'user', content: 'hi' },
+        { signal: controller.signal }
+      );
+      await vi.waitFor(() => expect(clientQueryMock).toHaveBeenCalledTimes(2));
 
-      expect(clientQueryMock.mock.calls[0][0]).toMatchObject({ text: 'BEGIN', signal: controller.signal });
-      expect(clientQueryMock.mock.calls[1][0]).toMatchObject({ signal: controller.signal });
-      expect(clientQueryMock).toHaveBeenCalledWith('ROLLBACK');
-      expect(clientQueryMock.mock.calls.some(([arg]) => arg?.text === 'COMMIT' || arg === 'COMMIT')).toBe(false);
+      controller.abort();
+      expect(releaseMock).toHaveBeenCalledWith(true);
+      finishInsert({ rows: [{ id: 'msg-1' }] });
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+
+      expect(clientQueryMock.mock.calls.some(([arg]) => arg === 'COMMIT')).toBe(false);
+      expect(clientQueryMock).toHaveBeenCalledTimes(2);
     });
 
     it('rejects an invalid role or blank content', async () => {
@@ -367,6 +366,21 @@ describe('memory/store.mjs & migrations', () => {
   });
 
   describe('getRecentMessages & cross-principal denial', () => {
+    it('destroys the dedicated connection when a read is aborted in flight', async () => {
+      const controller = new AbortController();
+      let finishRead;
+      clientQueryMock.mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; }));
+      const { getRecentMessages } = await import('../store.mjs');
+      const pending = getRecentMessages(PRINCIPAL_AUTH, 'conv-1', 12, { signal: controller.signal });
+      await vi.waitFor(() => expect(clientQueryMock).toHaveBeenCalledTimes(1));
+
+      controller.abort();
+      expect(releaseMock).toHaveBeenCalledWith(true);
+      finishRead({ rows: [{ role: 'user', content: 'late', created_at: new Date() }] });
+
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    });
+
     it('checks exact conversation ownership even when the conversation has no messages', async () => {
       queryMock.mockResolvedValueOnce({ rows: [{ owned: true }] });
       const { conversationExists } = await import('../store.mjs');

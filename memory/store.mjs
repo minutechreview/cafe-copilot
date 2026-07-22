@@ -58,10 +58,35 @@ export function throwIfAborted(signal) {
   }
 }
 
-function query(target, text, values, signal) {
+function bindAbort(client, signal) {
+  let destroyed = false;
+  const onAbort = () => {
+    destroyed = true;
+    client.release(true);
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  return {
+    cleanup: () => signal?.removeEventListener('abort', onAbort),
+    destroyed: () => destroyed,
+  };
+}
+
+async function runQuery(text, values, signal) {
   throwIfAborted(signal);
-  if (signal) return target.query({ text, values, signal });
-  return values === undefined ? target.query(text) : target.query(text, values);
+  if (!signal) {
+    return values === undefined ? getPool().query(text) : getPool().query(text, values);
+  }
+  const client = await getPool().connect();
+  const abort = bindAbort(client, signal);
+  try {
+    throwIfAborted(signal);
+    const result = values === undefined ? await client.query(text) : await client.query(text, values);
+    throwIfAborted(signal);
+    return result;
+  } finally {
+    abort.cleanup();
+    if (!abort.destroyed()) client.release();
+  }
 }
 
 /** Formats a JS number array as the literal CockroachDB VECTOR syntax expects, e.g. '[0.1,0.2]'. */
@@ -115,7 +140,7 @@ export async function createConversation(principal, input = {}, { signal } = {})
   const title = typeof input?.title === 'string' && input.title.trim() ? input.title.trim() : null;
 
   throwIfAborted(signal);
-  const { rows } = await query(getPool(),
+  const { rows } = await runQuery(
     `INSERT INTO conversations (business_id, actor_id, access_mode, title)
      VALUES ($1, $2, $3, $4)
      RETURNING id`,
@@ -129,7 +154,7 @@ export async function conversationExists(principal, conversationId, { signal } =
   const p = normalizePrincipal(principal);
   if (!conversationId || typeof conversationId !== 'string' || !conversationId.trim()) return false;
   throwIfAborted(signal);
-  const { rows } = await query(getPool(),
+  const { rows } = await runQuery(
     `SELECT EXISTS (
        SELECT 1 FROM conversations
         WHERE id = $1
@@ -168,12 +193,13 @@ export async function appendMessage(principal, input = {}, { signal } = {}) {
 
   throwIfAborted(signal);
   const client = await getPool().connect();
+  const abort = bindAbort(client, signal);
   try {
     throwIfAborted(signal);
-    await query(client, 'BEGIN', undefined, signal);
+    await client.query('BEGIN');
 
     throwIfAborted(signal);
-    const { rows } = await query(client,
+    const { rows } = await client.query(
       `INSERT INTO messages (conversation_id, role, content)
        SELECT c.id, $2, $3
          FROM conversations c
@@ -182,7 +208,7 @@ export async function appendMessage(principal, input = {}, { signal } = {}) {
           AND c.actor_id = $5
           AND c.access_mode = $6
        RETURNING id`,
-      [conversationId.trim(), role, content, p.businessId, p.actorId, p.accessMode], signal
+      [conversationId.trim(), role, content, p.businessId, p.actorId, p.accessMode]
     );
 
     if (!rows || rows.length === 0) {
@@ -192,24 +218,26 @@ export async function appendMessage(principal, input = {}, { signal } = {}) {
     const messageId = rows[0].id;
 
     throwIfAborted(signal);
-    await query(client,
+    await client.query(
       `UPDATE conversations
           SET updated_at = now()
         WHERE id = $1
           AND business_id = $2
           AND actor_id = $3
           AND access_mode = $4`,
-      [conversationId.trim(), p.businessId, p.actorId, p.accessMode], signal
+      [conversationId.trim(), p.businessId, p.actorId, p.accessMode]
     );
 
     throwIfAborted(signal);
-    await query(client, 'COMMIT', undefined, signal);
+    await client.query('COMMIT');
+    throwIfAborted(signal);
     return messageId;
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (!abort.destroyed()) await client.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    abort.cleanup();
+    if (!abort.destroyed()) client.release();
   }
 }
 
@@ -229,7 +257,7 @@ export async function getRecentMessages(principal, conversationId, limit = 12, {
   const numericLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 12;
 
   throwIfAborted(signal);
-  const { rows } = await query(getPool(),
+  const { rows } = await runQuery(
     `SELECT m.role, m.content, m.created_at
        FROM messages m
        JOIN conversations c ON m.conversation_id = c.id
@@ -264,7 +292,7 @@ export async function saveNote(principal, input = {}, { signal } = {}) {
   }
 
   throwIfAborted(signal);
-  const { rows } = await query(getPool(),
+  const { rows } = await runQuery(
     `INSERT INTO notes (business_id, created_by, content, source)
      VALUES ($1, $2, $3, $4)
      RETURNING id`,
@@ -299,7 +327,7 @@ export async function listNotes(principal, { signal } = {}) {
     values = [p.businessId, p.actorId];
   }
   throwIfAborted(signal);
-  const { rows } = await query(getPool(), sql, values, signal);
+  const { rows } = await runQuery(sql, values, signal);
   throwIfAborted(signal);
   return rows;
 }
@@ -325,7 +353,7 @@ export async function saveDraft(principal, input = {}, { signal } = {}) {
 
   if (conversationId) {
     throwIfAborted(signal);
-    const { rows } = await query(getPool(),
+    const { rows } = await runQuery(
       `INSERT INTO drafts (business_id, actor_id, access_mode, conversation_id, kind, payload)
        SELECT $1, $2, $3, c.id, $4, $5
          FROM conversations c
@@ -344,7 +372,7 @@ export async function saveDraft(principal, input = {}, { signal } = {}) {
   }
 
   throwIfAborted(signal);
-  const { rows } = await query(getPool(),
+  const { rows } = await runQuery(
     `INSERT INTO drafts (business_id, actor_id, access_mode, conversation_id, kind, payload)
      VALUES ($1, $2, $3, NULL, $4, $5)
      RETURNING id`,
@@ -380,7 +408,7 @@ export async function upsertDocument(principal, input = {}, { signal } = {}) {
 
   if (explicitId) {
     throwIfAborted(signal);
-    const { rows } = await query(getPool(),
+    const { rows } = await runQuery(
       `UPDATE documents
           SET doc_type = $3,
               doc_date = $4,
@@ -401,7 +429,7 @@ export async function upsertDocument(principal, input = {}, { signal } = {}) {
 
   if (docDate) {
     throwIfAborted(signal);
-    const { rows } = await query(getPool(),
+    const { rows } = await runQuery(
       `INSERT INTO documents (business_id, created_by, doc_type, doc_date, content, metadata, embedding)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (business_id, doc_type, doc_date) WHERE doc_date IS NOT NULL
@@ -415,7 +443,7 @@ export async function upsertDocument(principal, input = {}, { signal } = {}) {
   }
 
   throwIfAborted(signal);
-  const { rows } = await query(getPool(),
+  const { rows } = await runQuery(
     `INSERT INTO documents (business_id, created_by, doc_type, doc_date, content, metadata, embedding)
      VALUES ($1, $2, $3, NULL, $4, $5, $6)
      RETURNING id`,
@@ -436,7 +464,7 @@ export async function searchDocuments(principal, queryEmbedding, k = 5, { signal
   const numericK = Number.isFinite(k) && k > 0 ? Math.floor(k) : 5;
 
   throwIfAborted(signal);
-  const { rows } = await query(getPool(),
+  const { rows } = await runQuery(
     `SELECT id, doc_type, doc_date, content, metadata, embedding <=> $2 AS distance
        FROM documents
       WHERE business_id = $1

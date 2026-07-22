@@ -64,7 +64,7 @@ describe('agent/pos-client.mjs', () => {
 
   describe('getDemoPosClient', () => {
     it('signs in with environment demo owner credentials and returns the cached client', async () => {
-      signInWithPasswordMock.mockResolvedValueOnce({ error: null });
+      signInWithPasswordMock.mockResolvedValueOnce({ data: { session: { access_token: 'demo-session-token' } }, error: null });
       const { getDemoPosClient } = await import('../pos-client.mjs');
 
       const supabase = await getDemoPosClient();
@@ -81,19 +81,66 @@ describe('agent/pos-client.mjs', () => {
         email: 'demo@cafe.com',
         password: 'SecretDemoPassword123!',
       });
-      expect(supabase).toBeDefined();
+      expect(supabase.options.global).toMatchObject({
+        headers: { Authorization: 'Bearer demo-session-token' },
+        fetch: expect.any(Function),
+      });
     });
 
     it('caches the demo client across calls (single sign-in)', async () => {
-      signInWithPasswordMock.mockResolvedValue({ error: null });
+      signInWithPasswordMock.mockResolvedValue({ data: { session: { access_token: 'demo-session-token' } }, error: null });
       const { getDemoPosClient } = await import('../pos-client.mjs');
 
       const client1 = await getDemoPosClient();
       const client2 = await getDemoPosClient();
 
-      expect(createClientMock).toHaveBeenCalledTimes(1);
+      expect(createClientMock).toHaveBeenCalledTimes(2);
       expect(signInWithPasswordMock).toHaveBeenCalledTimes(1);
       expect(client1).toBe(client2);
+    });
+
+    it('does not capture the first request signal in the cached demo client fetch', async () => {
+      signInWithPasswordMock.mockResolvedValue({ data: { session: { access_token: 'demo-session-token' } }, error: null });
+      const originalFetch = globalThis.fetch;
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+      globalThis.fetch = fetchMock;
+      try {
+        const { getDemoPosClient } = await import('../pos-client.mjs');
+        const first = new AbortController();
+        const second = new AbortController();
+        const client1 = await getDemoPosClient({ signal: first.signal });
+        const client2 = await getDemoPosClient({ signal: second.signal });
+        const configuredFetch = client1.options.global.fetch;
+
+        await configuredFetch('https://example.test/one', { signal: first.signal });
+        await configuredFetch('https://example.test/two', { signal: second.signal });
+
+        expect(client2).toBe(client1);
+        expect(fetchMock.mock.calls[0][1].signal).toBe(first.signal);
+        expect(fetchMock.mock.calls[1][1].signal).toBe(second.signal);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('does not let one aborted sign-in cancel a concurrent demo request', async () => {
+      let finishFirst;
+      signInWithPasswordMock
+        .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }))
+        .mockResolvedValueOnce({ data: { session: { access_token: 'second-token' } }, error: null });
+      const { getDemoPosClient } = await import('../pos-client.mjs');
+      const first = new AbortController();
+      const second = new AbortController();
+
+      const firstRequest = getDemoPosClient({ signal: first.signal });
+      const secondRequest = getDemoPosClient({ signal: second.signal });
+      first.abort();
+      finishFirst({ data: { session: { access_token: 'first-token' } }, error: null });
+
+      await expect(firstRequest).rejects.toThrow('POS staging authentication failed');
+      await expect(secondRequest).resolves.toMatchObject({
+        options: { global: { headers: { Authorization: 'Bearer second-token' } } },
+      });
     });
 
     it('fails safely when DEMO_OWNER_EMAIL or DEMO_OWNER_PASSWORD is missing or whitespace', async () => {
