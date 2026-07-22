@@ -457,6 +457,25 @@ describe('resolveAuthContext - demo mode', () => {
 });
 
 describe('resolveAuthContext - invalid mode & security invariants', () => {
+  it('stops authentication after a deferred user lookup is aborted', async () => {
+    const controller = new AbortController();
+    let finishLookup;
+    const supabaseClient = {
+      auth: { getUser: vi.fn(() => new Promise((resolve) => { finishLookup = resolve; })) },
+      from: vi.fn(),
+    };
+    const pending = resolveAuthContext(
+      { headers: { authorization: 'Bearer token' }, mode: 'authenticated', businessId: 'biz-123' },
+      { supabaseClient, signal: controller.signal }
+    );
+
+    controller.abort();
+    finishLookup({ data: { user: { id: 'user-1' } }, error: null });
+
+    await expect(pending).rejects.toMatchObject({ status: 504 });
+    expect(supabaseClient.from).not.toHaveBeenCalled();
+  });
+
   it('throws 400 Bad Request when mode is missing', async () => {
     await expect(resolveAuthContext({})).rejects.toMatchObject({
       status: 400,

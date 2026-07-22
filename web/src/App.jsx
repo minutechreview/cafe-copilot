@@ -5,7 +5,8 @@ const ERROR_MESSAGE = "The copilot couldn't answer just now. Please try again.";
 // Defaults to the Vite dev proxy's relative path ('/chat' -> agent/dev-server.mjs, see
 // vite.config.js). A production build sets VITE_CHAT_URL to the deployed Lambda Function URL
 // at build time (see scripts/deploy-lambda.mjs and README.md's Deployment section) so the
-// same code works against either backend without a runtime branch.
+// same code works against either backend without a runtime branch. This public standalone
+// client is intentionally demo-only; the protected POS widget uses authenticated mode.
 const CHAT_URL = import.meta.env.VITE_CHAT_URL || '/chat';
 // Reload-and-remember is the C2 demo moment: the agent's memory lives in CockroachDB, not
 // in this tab, so all this needs to persist client-side is which conversation to continue.
@@ -105,8 +106,9 @@ export default function App() {
     try {
       const response = await fetch(CHAT_URL, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, conversationId }),
+        body: JSON.stringify({ mode: 'demo', message: text, conversationId }),
       });
 
       if (!response.ok || !response.body) {

@@ -3,8 +3,26 @@
 // be tested independently.
 import { generateDailySummary } from '../pos-sync/summarizer.mjs';
 import { embedText } from './embeddings.mjs';
-import { getPosClient } from './pos-client.mjs';
 import { saveNote, listNotes, saveDraft, searchDocuments } from '../memory/store.mjs';
+
+function getRequiredPosClient(ctx) {
+  if (!ctx || !ctx.posClient) {
+    throw new Error('posClient is required in execution context for POS tools');
+  }
+  return ctx.posClient;
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) {
+    const error = new Error('Request deadline exceeded');
+    error.name = 'AbortError';
+    throw error;
+  }
+}
+
+function withAbortSignal(query, signal) {
+  return signal && typeof query?.abortSignal === 'function' ? query.abortSignal(signal) : query;
+}
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -207,9 +225,30 @@ async function runGetDaySummary(input, ctx) {
   if (typeof date !== 'string' || !DATE_PATTERN.test(date)) {
     throw new Error('date must be in YYYY-MM-DD format');
   }
-  const supabase = ctx?.posClient || (await getPosClient());
-  const summary = await generateDailySummary({ supabase, businessId: ctx.businessId, date });
+  const supabase = getRequiredPosClient(ctx);
+  throwIfAborted(ctx.signal);
+  const localeOffsets = configuredLocaleOffsets();
+  const summary = await generateDailySummary({
+    supabase,
+    businessId: ctx.businessId,
+    date,
+    ...(localeOffsets ? { localeOffsets } : {}),
+    ...(ctx.signal ? { signal: ctx.signal } : {}),
+  });
+  throwIfAborted(ctx.signal);
   return summary ?? { no_activity: true, date };
+}
+
+function configuredLocaleOffsets() {
+  const raw = process.env.COPILOT_LOCALE_OFFSETS;
+  if (!raw) return undefined;
+  try {
+    const value = JSON.parse(raw);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
+    return value;
+  } catch {
+    throw new Error('COPILOT_LOCALE_OFFSETS must be valid JSON');
+  }
 }
 
 function validateDateRange(input) {
@@ -227,8 +266,19 @@ function validateDateRange(input) {
   return { startDate, endDate };
 }
 
-function localeOffset(locale) {
-  return String(locale || '').toUpperCase().endsWith('-LK') ? '+05:30' : 'Z';
+export function localeOffset(locale) {
+  const normalized = String(locale || '').trim().toUpperCase();
+  const configured = configuredLocaleOffsets() || {};
+  const configuredOffset = configured[normalized] || configured[String(locale || '').trim()];
+  if (configuredOffset !== undefined) {
+    if (!/^[+-](?:0\d|1\d|2[0-3]):[0-5]\d$/.test(configuredOffset)) {
+      throw new Error(`Invalid configured offset for locale ${locale}`);
+    }
+    return configuredOffset;
+  }
+  if (normalized.endsWith('-LK')) return '+05:30';
+  if (normalized.endsWith('-KW')) return '+03:00';
+  return 'Z';
 }
 
 function businessRangeIso(startDate, endDate, locale) {
@@ -249,28 +299,33 @@ function toBusinessDateKey(isoTimestamp, offset) {
   return shifted.toISOString().slice(0, 10);
 }
 
-async function fetchBusinessMeta(supabase, businessId) {
-  const { data, error } = await supabase
+async function fetchBusinessMeta(supabase, businessId, signal) {
+  throwIfAborted(signal);
+  const query = supabase
     .from('businesses')
     .select('id,currency,locale_default')
     .eq('id', businessId)
     .limit(1)
     .maybeSingle();
+  const { data, error } = await withAbortSignal(query, signal);
+  throwIfAborted(signal);
   if (error) throw new Error(`business lookup: ${error.message}`);
   if (!data) throw new Error(`Business not found: ${businessId}`);
   return data;
 }
 
-async function fetchRows(query, label) {
-  const { data, error } = await query;
+async function fetchRows(query, label, signal) {
+  throwIfAborted(signal);
+  const { data, error } = await withAbortSignal(query, signal);
+  throwIfAborted(signal);
   if (error) throw new Error(`${label}: ${error.message}`);
   return data || [];
 }
 
 async function runGetStaffPerformance(input, ctx) {
   const { startDate, endDate } = validateDateRange(input);
-  const supabase = ctx?.posClient || (await getPosClient());
-  const business = await fetchBusinessMeta(supabase, ctx.businessId);
+  const supabase = getRequiredPosClient(ctx);
+  const business = await fetchBusinessMeta(supabase, ctx.businessId, ctx.signal);
   const [start, end] = businessRangeIso(startDate, endDate, business.locale_default);
 
   const sessions = await fetchRows(
@@ -280,7 +335,8 @@ async function runGetStaffPerformance(input, ctx) {
       .eq('business_id', ctx.businessId)
       .gte('opened_at', start)
       .lt('opened_at', end),
-    'till sessions'
+    'till sessions',
+    ctx.signal
   );
 
   const sessionIds = sessions.map((session) => session.id);
@@ -292,7 +348,8 @@ async function runGetStaffPerformance(input, ctx) {
           .eq('business_id', ctx.businessId)
           .eq('status', 'completed')
           .in('till_session_id', sessionIds),
-        'orders'
+        'orders',
+        ctx.signal
       )
     : [];
 
@@ -303,7 +360,8 @@ async function runGetStaffPerformance(input, ctx) {
       .eq('business_id', ctx.businessId)
       .gte('created_at', start)
       .lt('created_at', end),
-    'order adjustments'
+    'order adjustments',
+    ctx.signal
   );
 
   const staffById = new Map();
@@ -397,8 +455,8 @@ async function runGetStaffPerformance(input, ctx) {
 
 async function runGetWasteLog(input, ctx) {
   const { startDate, endDate } = validateDateRange(input);
-  const supabase = ctx?.posClient || (await getPosClient());
-  const business = await fetchBusinessMeta(supabase, ctx.businessId);
+  const supabase = getRequiredPosClient(ctx);
+  const business = await fetchBusinessMeta(supabase, ctx.businessId, ctx.signal);
   const [start, end] = businessRangeIso(startDate, endDate, business.locale_default);
   const offset = localeOffset(business.locale_default);
 
@@ -410,7 +468,8 @@ async function runGetWasteLog(input, ctx) {
       .gte('timestamp', start)
       .lt('timestamp', end)
       .order('timestamp', { ascending: false }),
-    'waste logs'
+    'waste logs',
+    ctx.signal
   );
 
   const entries = logs.map((log) => {
@@ -471,22 +530,28 @@ async function runGetWasteLog(input, ctx) {
 async function runSearchMemory(input, ctx) {
   const query = requireNonEmptyString(input?.query, 'query is required');
   const k = Number.isFinite(input?.k) && input.k > 0 ? Math.floor(input.k) : 5;
-  const embedding = await embedText(query);
+  throwIfAborted(ctx.signal);
+  const embedding = ctx.signal ? await embedText(query, { signal: ctx.signal }) : await embedText(query);
+  throwIfAborted(ctx.signal);
   const principal = resolvePrincipal(ctx);
-  const results = await searchDocuments(principal, embedding, k);
+  const results = ctx.signal
+    ? await searchDocuments(principal, embedding, k, { signal: ctx.signal })
+    : await searchDocuments(principal, embedding, k);
   return { results };
 }
 
 async function runSaveNote(input, ctx) {
   const content = requireNonEmptyString(input?.content, 'content is required');
   const principal = resolvePrincipal(ctx);
-  const id = await saveNote(principal, { content, source: 'chat' });
+  throwIfAborted(ctx.signal);
+  const note = { content, source: 'chat' };
+  const id = ctx.signal ? await saveNote(principal, note, { signal: ctx.signal }) : await saveNote(principal, note);
   return { id, content, saved: true };
 }
 
 async function runListNotes(_input, ctx) {
   const principal = resolvePrincipal(ctx);
-  const notes = await listNotes(principal);
+  const notes = ctx.signal ? await listNotes(principal, { signal: ctx.signal }) : await listNotes(principal);
   return { notes };
 }
 
@@ -499,11 +564,13 @@ async function runDraftPurchaseOrder(input, ctx) {
     notes: typeof input?.notes === 'string' && input.notes.trim() ? input.notes.trim() : null,
   };
   const principal = resolvePrincipal(ctx);
-  const id = await saveDraft(principal, {
+  throwIfAborted(ctx.signal);
+  const draft = {
     conversationId: ctx.conversationId,
     kind: payload.kind,
     payload,
-  });
+  };
+  const id = ctx.signal ? await saveDraft(principal, draft, { signal: ctx.signal }) : await saveDraft(principal, draft);
   return { id, ...payload, saved_for_review: true };
 }
 
@@ -525,5 +592,6 @@ export async function executeTool(name, input, ctx) {
   if (!run) {
     throw new Error(`Unknown tool: ${name}`);
   }
+  throwIfAborted(ctx.signal);
   return run(input ?? {}, ctx);
 }

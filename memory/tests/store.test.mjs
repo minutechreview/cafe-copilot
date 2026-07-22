@@ -46,7 +46,42 @@ describe('memory/store.mjs & migrations', () => {
     await createConversation(PRINCIPAL_AUTH, { title: 't2' });
 
     expect(PoolMock).toHaveBeenCalledTimes(1);
-    expect(PoolMock).toHaveBeenCalledWith({ connectionString: process.env.CRDB_CONNECTION_STRING });
+    expect(PoolMock).toHaveBeenCalledWith({
+      connectionString: process.env.CRDB_CONNECTION_STRING,
+      max: 4,
+      connectionTimeoutMillis: 5000,
+      idleTimeoutMillis: 10000,
+      query_timeout: 10000,
+      statement_timeout: 10000,
+    });
+  });
+
+  it('uses validated bounded pool settings from server environment variables', async () => {
+    process.env.CRDB_POOL_MAX = '3';
+    process.env.CRDB_CONNECTION_TIMEOUT_MS = '2500';
+    process.env.CRDB_IDLE_TIMEOUT_MS = '15000';
+    process.env.CRDB_QUERY_TIMEOUT_MS = '8000';
+    process.env.CRDB_STATEMENT_TIMEOUT_MS = '9000';
+    const { getPoolOptions } = await import('../store.mjs');
+
+    expect(getPoolOptions()).toEqual({
+      connectionString: process.env.CRDB_CONNECTION_STRING,
+      max: 3,
+      connectionTimeoutMillis: 2500,
+      idleTimeoutMillis: 15000,
+      query_timeout: 8000,
+      statement_timeout: 9000,
+    });
+  });
+
+  it('fails closed for invalid bounded pool configuration before creating a pool', async () => {
+    process.env.CRDB_POOL_MAX = '11';
+    const { createConversation } = await import('../store.mjs');
+
+    await expect(createConversation(PRINCIPAL_AUTH, { title: 't' })).rejects.toThrow(
+      'CRDB_POOL_MAX must be a positive integer no greater than 10'
+    );
+    expect(PoolMock).not.toHaveBeenCalled();
   });
 
   describe('splitSqlStatements utility', () => {
@@ -275,6 +310,30 @@ describe('memory/store.mjs & migrations', () => {
       expect(releaseMock).toHaveBeenCalledTimes(1);
     });
 
+    it('destroys the connection and never commits when an in-flight write is aborted', async () => {
+      const controller = new AbortController();
+      let finishInsert;
+      clientQueryMock
+        .mockResolvedValueOnce(undefined)
+        .mockImplementationOnce(() => new Promise((resolve) => { finishInsert = resolve; }));
+
+      const { appendMessage } = await import('../store.mjs');
+      const pending = appendMessage(
+        PRINCIPAL_AUTH,
+        { conversationId: 'conv-1', role: 'user', content: 'hi' },
+        { signal: controller.signal }
+      );
+      await vi.waitFor(() => expect(clientQueryMock).toHaveBeenCalledTimes(2));
+
+      controller.abort();
+      expect(releaseMock).toHaveBeenCalledWith(true);
+      finishInsert({ rows: [{ id: 'msg-1' }] });
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+
+      expect(clientQueryMock.mock.calls.some(([arg]) => arg === 'COMMIT')).toBe(false);
+      expect(clientQueryMock).toHaveBeenCalledTimes(2);
+    });
+
     it('rejects an invalid role or blank content', async () => {
       const { appendMessage } = await import('../store.mjs');
 
@@ -307,6 +366,42 @@ describe('memory/store.mjs & migrations', () => {
   });
 
   describe('getRecentMessages & cross-principal denial', () => {
+    it('destroys the dedicated connection when a read is aborted in flight', async () => {
+      const controller = new AbortController();
+      let finishRead;
+      clientQueryMock.mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; }));
+      const { getRecentMessages } = await import('../store.mjs');
+      const pending = getRecentMessages(PRINCIPAL_AUTH, 'conv-1', 12, { signal: controller.signal });
+      await vi.waitFor(() => expect(clientQueryMock).toHaveBeenCalledTimes(1));
+
+      controller.abort();
+      expect(releaseMock).toHaveBeenCalledWith(true);
+      finishRead({ rows: [{ role: 'user', content: 'late', created_at: new Date() }] });
+
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    });
+
+    it('checks exact conversation ownership even when the conversation has no messages', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ owned: true }] });
+      const { conversationExists } = await import('../store.mjs');
+
+      await expect(conversationExists(PRINCIPAL_AUTH, 'conv-empty')).resolves.toBe(true);
+      expect(queryMock).toHaveBeenCalledWith(
+        expect.stringContaining('AND actor_id = $3'),
+        ['conv-empty', 'biz-1', 'user-100', 'authenticated']
+      );
+    });
+
+    it('returns false for stale or foreign actor/business/mode conversation ids', async () => {
+      queryMock.mockResolvedValue({ rows: [{ owned: false }] });
+      const { conversationExists } = await import('../store.mjs');
+
+      await expect(conversationExists(PRINCIPAL_AUTH, 'foreign')).resolves.toBe(false);
+      expect(queryMock.mock.calls[0][0]).toContain('business_id = $2');
+      expect(queryMock.mock.calls[0][0]).toContain('actor_id = $3');
+      expect(queryMock.mock.calls[0][0]).toContain('access_mode = $4');
+    });
+
     it('returns messages oldest-first when principal owns the conversation', async () => {
       queryMock.mockResolvedValueOnce({
         rows: [
@@ -390,7 +485,7 @@ describe('memory/store.mjs & migrations', () => {
       expect(params).toEqual(['biz-1', 'user-100', 'oat milk note', null]);
     });
 
-    it('lists notes for a business carrying created_by', async () => {
+    it('lists authenticated business notes while excluding demo-session notes', async () => {
       queryMock.mockResolvedValueOnce({
         rows: [{ id: 'note-1', content: 'note content', created_by: 'user-100', created_at: new Date() }],
       });
@@ -399,7 +494,53 @@ describe('memory/store.mjs & migrations', () => {
       const notes = await listNotes(PRINCIPAL_AUTH);
       expect(notes).toHaveLength(1);
       expect(notes[0].created_by).toBe('user-100');
+      const [sql, params] = queryMock.mock.calls[0];
+      expect(sql).toContain("created_by NOT LIKE 'demo-session-%'");
+      expect(sql).toContain("created_by <> 'legacy_demo'");
+      expect(params).toEqual(['biz-1']);
     });
+
+    it('isolates demo note listing to the exact demo-session actor', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ id: 'own-note', created_by: PRINCIPAL_DEMO.actorId }] });
+      const { listNotes } = await import('../store.mjs');
+
+      const notes = await listNotes(PRINCIPAL_DEMO);
+
+      expect(notes).toEqual([{ id: 'own-note', created_by: PRINCIPAL_DEMO.actorId }]);
+      const [sql, params] = queryMock.mock.calls[0];
+      expect(sql).toContain('created_by = $2');
+      expect(params).toEqual(['biz-1', 'demo-456']);
+    });
+
+    it('stores separate immutable created_by identities for two demo sessions', async () => {
+      queryMock.mockResolvedValue({ rows: [{ id: 'note-demo' }] });
+      const { saveNote } = await import('../store.mjs');
+      const otherDemo = { ...PRINCIPAL_DEMO, actorId: 'demo-other' };
+
+      await saveNote(PRINCIPAL_DEMO, { content: 'mine' });
+      await saveNote(otherDemo, { content: 'theirs' });
+
+      expect(queryMock.mock.calls[0][1][1]).toBe('demo-456');
+      expect(queryMock.mock.calls[1][1][1]).toBe('demo-other');
+    });
+  });
+
+  it('starts no memory write when the request signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const store = await import('../store.mjs');
+
+    await expect(store.createConversation(PRINCIPAL_AUTH, {}, { signal: controller.signal })).rejects.toThrow(
+      'Request deadline exceeded'
+    );
+    await expect(store.saveNote(PRINCIPAL_AUTH, { content: 'nope' }, { signal: controller.signal })).rejects.toThrow(
+      'Request deadline exceeded'
+    );
+    await expect(
+      store.saveDraft(PRINCIPAL_AUTH, { kind: 'purchase_order', payload: {} }, { signal: controller.signal })
+    ).rejects.toThrow('Request deadline exceeded');
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(connectMock).not.toHaveBeenCalled();
   });
 
   describe('upsertDocument & document security', () => {
