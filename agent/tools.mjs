@@ -3,8 +3,14 @@
 // be tested independently.
 import { generateDailySummary } from '../pos-sync/summarizer.mjs';
 import { embedText } from './embeddings.mjs';
-import { getPosClient } from './pos-client.mjs';
 import { saveNote, listNotes, saveDraft, searchDocuments } from '../memory/store.mjs';
+
+function getRequiredPosClient(ctx) {
+  if (!ctx || !ctx.posClient) {
+    throw new Error('posClient is required in execution context for POS tools');
+  }
+  return ctx.posClient;
+}
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -207,7 +213,7 @@ async function runGetDaySummary(input, ctx) {
   if (typeof date !== 'string' || !DATE_PATTERN.test(date)) {
     throw new Error('date must be in YYYY-MM-DD format');
   }
-  const supabase = ctx?.posClient || (await getPosClient());
+  const supabase = getRequiredPosClient(ctx);
   const summary = await generateDailySummary({ supabase, businessId: ctx.businessId, date });
   return summary ?? { no_activity: true, date };
 }
@@ -269,7 +275,7 @@ async function fetchRows(query, label) {
 
 async function runGetStaffPerformance(input, ctx) {
   const { startDate, endDate } = validateDateRange(input);
-  const supabase = ctx?.posClient || (await getPosClient());
+  const supabase = getRequiredPosClient(ctx);
   const business = await fetchBusinessMeta(supabase, ctx.businessId);
   const [start, end] = businessRangeIso(startDate, endDate, business.locale_default);
 
@@ -397,7 +403,7 @@ async function runGetStaffPerformance(input, ctx) {
 
 async function runGetWasteLog(input, ctx) {
   const { startDate, endDate } = validateDateRange(input);
-  const supabase = ctx?.posClient || (await getPosClient());
+  const supabase = getRequiredPosClient(ctx);
   const business = await fetchBusinessMeta(supabase, ctx.businessId);
   const [start, end] = businessRangeIso(startDate, endDate, business.locale_default);
   const offset = localeOffset(business.locale_default);
