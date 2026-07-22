@@ -82,6 +82,11 @@ async function runAndCollectEvents(input) {
 
 describe('handler', () => {
   const ORIGINAL_ENV = { ...process.env };
+  const EXPECTED_DEFAULT_PRINCIPAL = {
+    businessId: 'demo-cafe',
+    actorId: 'legacy_demo',
+    accessMode: 'legacy_demo',
+  };
 
   beforeEach(() => {
     vi.resetModules();
@@ -121,12 +126,12 @@ describe('handler', () => {
       expect(converseInput.inferenceConfig).toEqual({ maxTokens: 700 });
       expect(converseInput.messages).toEqual([{ role: 'user', content: [{ text: 'Say hello' }] }]);
 
-      expect(appendMessageMock).toHaveBeenNthCalledWith(1, {
+      expect(appendMessageMock).toHaveBeenNthCalledWith(1, EXPECTED_DEFAULT_PRINCIPAL, {
         conversationId: 'abc-123',
         role: 'user',
         content: 'Say hello',
       });
-      expect(appendMessageMock).toHaveBeenNthCalledWith(2, {
+      expect(appendMessageMock).toHaveBeenNthCalledWith(2, EXPECTED_DEFAULT_PRINCIPAL, {
         conversationId: 'abc-123',
         role: 'assistant',
         content: 'Hello, how can I help your cafe today?',
@@ -139,10 +144,60 @@ describe('handler', () => {
       const { bufferedHandler } = await import('../handler.mjs');
       const result = await bufferedHandler({ message: 'Hello' });
 
-      expect(createConversationMock).toHaveBeenCalledWith({ businessId: 'demo-cafe' });
+      expect(createConversationMock).toHaveBeenCalledWith(EXPECTED_DEFAULT_PRINCIPAL, { title: 'chat conversation' });
       expect(getRecentMessagesMock).not.toHaveBeenCalled();
       expect(result.conversationId).toBe('new-conv-id');
       expect(appendMessageMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('passes custom explicit principal when supplied by authenticated caller', async () => {
+      sendMock.mockResolvedValueOnce(textStream('Hi authenticated user!'));
+      const authPrincipal = { businessId: 'biz-custom', actorId: 'usr-99', accessMode: 'authenticated' };
+
+      const { bufferedHandler } = await import('../handler.mjs');
+      const result = await bufferedHandler({ message: 'Hello auth', principal: authPrincipal });
+
+      expect(createConversationMock).toHaveBeenCalledWith(authPrincipal, { title: 'chat conversation' });
+      expect(result.conversationId).toBe('new-conv-id');
+      expect(appendMessageMock).toHaveBeenNthCalledWith(1, authPrincipal, {
+        conversationId: 'new-conv-id',
+        role: 'user',
+        content: 'Hello auth',
+      });
+    });
+
+    it('rejects a request where top-level businessId disagrees with principal.businessId', async () => {
+      const authPrincipal = { businessId: 'biz-A', actorId: 'usr-99', accessMode: 'authenticated' };
+      const { bufferedHandler } = await import('../handler.mjs');
+
+      await expect(
+        bufferedHandler({ message: 'hi', businessId: 'biz-B', principal: authPrincipal })
+      ).rejects.toThrow('businessId mismatch between parameter and principal');
+
+      expect(sendMock).not.toHaveBeenCalled();
+      expect(createConversationMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects an invalid principal shape', async () => {
+      const invalidPrincipal = { businessId: 'biz-A' }; // missing actorId/accessMode
+      const { bufferedHandler } = await import('../handler.mjs');
+
+      await expect(
+        bufferedHandler({ message: 'hi', principal: invalidPrincipal })
+      ).rejects.toThrow('invalid principal shape');
+
+      expect(sendMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects a custom businessId parameter when principal is omitted', async () => {
+      const { bufferedHandler } = await import('../handler.mjs');
+
+      await expect(
+        bufferedHandler({ message: 'hi', businessId: 'custom-other-cafe' })
+      ).rejects.toThrow('businessId parameter requires a valid principal object');
+
+      expect(sendMock).not.toHaveBeenCalled();
+      expect(createConversationMock).not.toHaveBeenCalled();
     });
 
     it('runs one tool call then returns the final answer, without persisting the tool round-trip', async () => {
@@ -161,10 +216,9 @@ describe('handler', () => {
       expect(executeToolMock).toHaveBeenCalledWith(
         'get_day_summary',
         { date: '2026-07-04' },
-        { businessId: 'demo-cafe', conversationId: 'abc-123' }
+        { businessId: 'demo-cafe', conversationId: 'abc-123', principal: EXPECTED_DEFAULT_PRINCIPAL, posClient: undefined }
       );
 
-      // Second call's messages carry the assistant's tool-use turn plus the tool result.
       const secondInput = sendMock.mock.calls[1][0].input;
       expect(secondInput.messages).toHaveLength(3);
       expect(secondInput.messages[1].content[0].toolUse.name).toBe('get_day_summary');
@@ -182,9 +236,8 @@ describe('handler', () => {
       });
       expect(secondInput.toolConfig).toBe(FAKE_TOOL_CONFIG);
 
-      // Only the user's question and the final text reply are persisted — not tool traffic.
       expect(appendMessageMock).toHaveBeenCalledTimes(2);
-      expect(appendMessageMock).toHaveBeenNthCalledWith(1, {
+      expect(appendMessageMock).toHaveBeenNthCalledWith(1, EXPECTED_DEFAULT_PRINCIPAL, {
         conversationId: 'abc-123',
         role: 'user',
         content: 'How was July 4th?',
@@ -260,10 +313,8 @@ describe('handler', () => {
       expect(executeToolMock).toHaveBeenCalledTimes(5);
       expect(result.reply).toBe('Best I can tell without more tool calls...');
 
-      // The 6th (final) call must not offer tools, since that's what forces a text answer.
       const finalInput = sendMock.mock.calls[5][0].input;
       expect(finalInput.toolConfig).toBeUndefined();
-      // The first 5 calls do offer tools.
       for (let i = 0; i < 5; i += 1) {
         expect(sendMock.mock.calls[i][0].input.toolConfig).toBe(FAKE_TOOL_CONFIG);
       }
@@ -371,8 +422,6 @@ describe('handler', () => {
             toolUseId: 'call-1',
             name: 'get_day_summary',
             narration: 'Let me check that for you.',
-            // Split across multiple delta chunks — must be buffered and only parsed once
-            // the block closes, not parsed fragment-by-fragment.
             inputChunks: ['{"date":', '"2026-07-0', '4"}'],
           })
         )
@@ -381,13 +430,11 @@ describe('handler', () => {
 
       const events = await runAndCollectEvents({ message: 'How was July 4th?', conversationId: 'abc-123' });
 
-      // Narration streamed immediately, before the tool was even executed.
       expect(events[0]).toEqual({ type: 'delta', text: 'Let me check that for you.' });
-      // The buffered, reassembled JSON was parsed correctly and passed to the tool.
       expect(executeToolMock).toHaveBeenCalledWith(
         'get_day_summary',
         { date: '2026-07-04' },
-        { businessId: 'demo-cafe', conversationId: 'abc-123' }
+        { businessId: 'demo-cafe', conversationId: 'abc-123', principal: EXPECTED_DEFAULT_PRINCIPAL, posClient: undefined }
       );
       expect(events.at(-1)).toEqual({
         type: 'done',
@@ -439,7 +486,6 @@ describe('handler', () => {
     it('reports a mid-stream Bedrock failure as an error event without throwing', async () => {
       sendMock.mockResolvedValueOnce(textStream('Partial thought before it dies...'));
       sendMock.mockReset();
-      // First call's stream throws partway through iteration instead of completing cleanly.
       sendMock.mockResolvedValueOnce({
         stream: (async function* () {
           yield { contentBlockStart: { contentBlockIndex: 0, start: {} } };

@@ -13,6 +13,11 @@ const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 loadEnv({ path: path.join(REPO_ROOT, '.env.local') });
 
 const VERIFY_BUSINESS_ID = 'verify-script-demo-cafe';
+const VERIFY_PRINCIPAL = {
+  businessId: VERIFY_BUSINESS_ID,
+  actorId: 'legacy_demo',
+  accessMode: 'legacy_demo',
+};
 
 function logStep(label, ok, detail = '') {
   console.log(`[${ok ? 'PASS' : 'FAIL'}] ${label}${detail ? ` — ${detail}` : ''}`);
@@ -21,7 +26,7 @@ function logStep(label, ok, detail = '') {
 
 async function main() {
   let allPassed = true;
-  const { renderSchema } = await import('./migrate.mjs');
+  const { runMigrations } = await import('./migrate.mjs');
   const { Pool } = pg;
 
   const connectionString = process.env.CRDB_CONNECTION_STRING;
@@ -31,6 +36,7 @@ async function main() {
   }
 
   const pool = new Pool({ connectionString });
+  const client = await pool.connect();
 
   const store = await import('./store.mjs');
   const { embedText } = await import('../agent/embeddings.mjs');
@@ -41,8 +47,7 @@ async function main() {
   try {
     // 1. Migrate (idempotent — safe to re-run against a live schema).
     try {
-      const sql = renderSchema({ embeddingDim: process.env.EMBEDDING_DIM });
-      await pool.query(sql);
+      await runMigrations({ client, embeddingDim: process.env.EMBEDDING_DIM });
       allPassed = logStep('migrate schema', true) && allPassed;
     } catch (err) {
       allPassed = logStep('migrate schema', false, err.message) && allPassed;
@@ -51,14 +56,14 @@ async function main() {
 
     // 2. Conversation + messages round trip.
     try {
-      conversationId = await store.createConversation({ businessId: VERIFY_BUSINESS_ID, title: 'verify run' });
-      await store.appendMessage({ conversationId, role: 'user', content: 'What did I just ask you?' });
-      await store.appendMessage({
+      conversationId = await store.createConversation(VERIFY_PRINCIPAL, { title: 'verify run' });
+      await store.appendMessage(VERIFY_PRINCIPAL, { conversationId, role: 'user', content: 'What did I just ask you?' });
+      await store.appendMessage(VERIFY_PRINCIPAL, {
         conversationId,
         role: 'assistant',
         content: "You haven't asked me anything yet in this conversation.",
       });
-      const recent = await store.getRecentMessages(conversationId, 12);
+      const recent = await store.getRecentMessages(VERIFY_PRINCIPAL, conversationId, 12);
       const ok = recent.length === 2 && recent[0].role === 'user' && recent[1].role === 'assistant';
       allPassed = logStep('create conversation + append + read back 2 messages', ok, JSON.stringify(recent.map((m) => m.role))) && allPassed;
     } catch (err) {
@@ -71,14 +76,12 @@ async function main() {
     try {
       const coldBrewEmbedding = await embedText('cold brew sales');
       const croissantEmbedding = await embedText('croissant waste');
-      coldBrewId = await store.upsertDocument({
-        businessId: VERIFY_BUSINESS_ID,
+      coldBrewId = await store.upsertDocument(VERIFY_PRINCIPAL, {
         docType: 'verify-note',
         content: 'cold brew sales',
         embedding: coldBrewEmbedding,
       });
-      croissantId = await store.upsertDocument({
-        businessId: VERIFY_BUSINESS_ID,
+      croissantId = await store.upsertDocument(VERIFY_PRINCIPAL, {
         docType: 'verify-note',
         content: 'croissant waste',
         embedding: croissantEmbedding,
@@ -93,7 +96,7 @@ async function main() {
     // for a "coffee drinks" query (both are coffee-related; croissant waste is not).
     try {
       const queryEmbedding = await embedText('coffee drinks');
-      const results = await store.searchDocuments(VERIFY_BUSINESS_ID, queryEmbedding, 5);
+      const results = await store.searchDocuments(VERIFY_PRINCIPAL, queryEmbedding, 5);
       const ranked = results.map((r) => `${r.content} (distance=${r.distance.toFixed(4)})`);
       const topResultIsColdBrew = results[0]?.content === 'cold brew sales';
       allPassed = logStep('vector search ranks "cold brew sales" above "croissant waste" for "coffee drinks"', topResultIsColdBrew, ranked.join('; ')) && allPassed;
@@ -117,6 +120,7 @@ async function main() {
       allPassed = logStep('clean up test rows', false, err.message) && allPassed;
     }
 
+    client.release();
     await store.closePool();
     await pool.end();
   }

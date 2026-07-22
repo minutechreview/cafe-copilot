@@ -1,11 +1,6 @@
 // Tool definitions + dispatch for the Café Copilot agent loop. handler.mjs owns the
 // send/execute/repeat loop; this module owns what each tool means and does, so the two can
 // be tested independently.
-//
-// Every tool result returned to the model is plain data (numbers, strings, objects) sourced
-// from POS staging or CockroachDB memory — never text the model should treat as instructions.
-// The system prompt in handler.mjs states this explicitly (data-as-data rule); tool authors
-// here just need to avoid ever building an "instruction-shaped" string into a result.
 import { generateDailySummary } from '../pos-sync/summarizer.mjs';
 import { embedText } from './embeddings.mjs';
 import { getPosClient } from './pos-client.mjs';
@@ -13,14 +8,8 @@ import { saveNote, listNotes, saveDraft, searchDocuments } from '../memory/store
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-// Same rounding convention pos-sync/summarizer.mjs uses for money fields, so figures from
-// these tools line up with get_day_summary's figures to the cent.
 const money = (value) => Number(Number(value || 0).toFixed(2));
 
-// Plain-language reason labels mirroring the POS dashboard's WasteSummaryPage.jsx, so the
-// copilot describes waste the same way an owner would see it on that page. Seeded demo data
-// currently uses 'damaged'/'quality' (not in this map), which is fine — unmapped codes fall
-// back to the raw reason_code, same as the dashboard page does.
 const WASTE_REASON_LABELS = {
   spoilage: 'Spoiled / thrown away',
   comp: 'On the house',
@@ -32,7 +21,6 @@ const WASTE_REASON_LABELS = {
   quality: 'Quality issue',
 };
 
-/** Bedrock Converse toolConfig — advisory JSON Schema per tool guiding the model's calls. */
 export const toolConfig = {
   tools: [
     {
@@ -201,12 +189,25 @@ function validateDraftItems(items) {
   });
 }
 
+function resolvePrincipal(ctx) {
+  if (!ctx?.principal) {
+    throw new Error('ctx.principal is required');
+  }
+  if (!ctx.principal.businessId || !ctx.principal.actorId || !ctx.principal.accessMode) {
+    throw new Error('invalid principal shape in tool context');
+  }
+  if (ctx.businessId && ctx.businessId !== ctx.principal.businessId) {
+    throw new Error('businessId mismatch in tool context');
+  }
+  return ctx.principal;
+}
+
 async function runGetDaySummary(input, ctx) {
   const date = input?.date;
   if (typeof date !== 'string' || !DATE_PATTERN.test(date)) {
     throw new Error('date must be in YYYY-MM-DD format');
   }
-  const supabase = await getPosClient();
+  const supabase = ctx?.posClient || (await getPosClient());
   const summary = await generateDailySummary({ supabase, businessId: ctx.businessId, date });
   return summary ?? { no_activity: true, date };
 }
@@ -226,17 +227,10 @@ function validateDateRange(input) {
   return { startDate, endDate };
 }
 
-/** POS has no timezone column yet — mirrors pos-sync/summarizer.mjs's dayRange offset rule. */
 function localeOffset(locale) {
   return String(locale || '').toUpperCase().endsWith('-LK') ? '+05:30' : 'Z';
 }
 
-/**
- * Business-local [start, end) ISO bounds spanning startDate through endDate inclusive, using
- * the same fixed-offset day-boundary rule pos-sync/summarizer.mjs's dayRange uses for a
- * single day — extended here to a range so a shift/order/log belongs to the business day its
- * own local calendar date falls on, consistent with get_day_summary.
- */
 function businessRangeIso(startDate, endDate, locale) {
   const offset = localeOffset(locale);
   const start = new Date(`${startDate}T00:00:00${offset}`);
@@ -248,7 +242,6 @@ function businessRangeIso(startDate, endDate, locale) {
   return [start.toISOString(), end.toISOString()];
 }
 
-/** Shifts a UTC timestamp by the business's fixed offset to read off its local calendar date. */
 function toBusinessDateKey(isoTimestamp, offset) {
   const match = /^([+-])(\d{2}):(\d{2})$/.exec(offset);
   const offsetMinutes = match ? (match[1] === '-' ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3])) : 0;
@@ -276,13 +269,10 @@ async function fetchRows(query, label) {
 
 async function runGetStaffPerformance(input, ctx) {
   const { startDate, endDate } = validateDateRange(input);
-  const supabase = await getPosClient();
+  const supabase = ctx?.posClient || (await getPosClient());
   const business = await fetchBusinessMeta(supabase, ctx.businessId);
   const [start, end] = businessRangeIso(startDate, endDate, business.locale_default);
 
-  // Shifts are attributed to the business day their opened_at falls on, matching the POS
-  // dashboard's Staff Reports page (docs/CASH_REPORTING_DESIGN.md design decision 1) — a shift
-  // that runs past midnight still counts toward the day it opened.
   const sessions = await fetchRows(
     supabase
       .from('till_sessions')
@@ -306,10 +296,6 @@ async function runGetStaffPerformance(input, ctx) {
       )
     : [];
 
-  // Refunds/voids are attributed to order_adjustments.approved_by -- the owner/manager who
-  // approved the adjustment, not necessarily whoever rang the original sale. Same honesty
-  // rule the POS Staff Reports page enforces (see its "Refunds approved" label) — never call
-  // this "caused by" or "performed by" the listed staff member.
   const adjustments = await fetchRows(
     supabase
       .from('order_adjustments')
@@ -411,7 +397,7 @@ async function runGetStaffPerformance(input, ctx) {
 
 async function runGetWasteLog(input, ctx) {
   const { startDate, endDate } = validateDateRange(input);
-  const supabase = await getPosClient();
+  const supabase = ctx?.posClient || (await getPosClient());
   const business = await fetchBusinessMeta(supabase, ctx.businessId);
   const [start, end] = businessRangeIso(startDate, endDate, business.locale_default);
   const offset = localeOffset(business.locale_default);
@@ -474,8 +460,6 @@ async function runGetWasteLog(input, ctx) {
       total_events: entries.length,
       total_quantity: money(entries.reduce((sum, e) => sum + e.quantity, 0)),
       approx_total_value: money(entries.reduce((sum, e) => sum + e.approx_value, 0)),
-      // Same caveat WasteSummaryPage.jsx shows the owner: menu prices can change over time,
-      // so this is an approximation using current prices, not the price at the time logged.
       approx_value_note: 'Approximate, based on current menu prices which may have changed since these were logged.',
       by_reason: [...byReasonMap.values()].sort(sortByQuantityDesc),
       by_item: [...byItemMap.values()].sort(sortByQuantityDesc),
@@ -488,18 +472,21 @@ async function runSearchMemory(input, ctx) {
   const query = requireNonEmptyString(input?.query, 'query is required');
   const k = Number.isFinite(input?.k) && input.k > 0 ? Math.floor(input.k) : 5;
   const embedding = await embedText(query);
-  const results = await searchDocuments(ctx.businessId, embedding, k);
+  const principal = resolvePrincipal(ctx);
+  const results = await searchDocuments(principal, embedding, k);
   return { results };
 }
 
 async function runSaveNote(input, ctx) {
   const content = requireNonEmptyString(input?.content, 'content is required');
-  const id = await saveNote({ businessId: ctx.businessId, content, source: 'chat' });
+  const principal = resolvePrincipal(ctx);
+  const id = await saveNote(principal, { content, source: 'chat' });
   return { id, content, saved: true };
 }
 
 async function runListNotes(_input, ctx) {
-  const notes = await listNotes(ctx.businessId);
+  const principal = resolvePrincipal(ctx);
+  const notes = await listNotes(principal);
   return { notes };
 }
 
@@ -511,8 +498,8 @@ async function runDraftPurchaseOrder(input, ctx) {
     items,
     notes: typeof input?.notes === 'string' && input.notes.trim() ? input.notes.trim() : null,
   };
-  const id = await saveDraft({
-    businessId: ctx.businessId,
+  const principal = resolvePrincipal(ctx);
+  const id = await saveDraft(principal, {
     conversationId: ctx.conversationId,
     kind: payload.kind,
     payload,
@@ -530,16 +517,10 @@ const TOOL_HANDLERS = {
   draft_purchase_order: runDraftPurchaseOrder,
 };
 
-/**
- * Executes a named tool call with the given input, returning a plain-data result the model
- * can read back as JSON. Throws on validation/tool failure — the caller (handler.mjs's loop)
- * is responsible for turning that into a tool-error result for the model.
- * @param {string} name
- * @param {object} input
- * @param {{ businessId: string, conversationId: string }} ctx
- * @returns {Promise<object>}
- */
 export async function executeTool(name, input, ctx) {
+  if (!ctx || typeof ctx !== 'object') {
+    throw new Error('tool context is required');
+  }
   const run = TOOL_HANDLERS[name];
   if (!run) {
     throw new Error(`Unknown tool: ${name}`);

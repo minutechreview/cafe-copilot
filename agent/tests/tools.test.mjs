@@ -20,7 +20,11 @@ vi.mock('../../memory/store.mjs', () => ({
   searchDocuments: searchDocumentsMock,
 }));
 
-const CTX = { businessId: 'biz-1', conversationId: 'conv-1' };
+const CTX = {
+  businessId: 'biz-1',
+  conversationId: 'conv-1',
+  principal: { businessId: 'biz-1', actorId: 'legacy_demo', accessMode: 'legacy_demo' },
+};
 
 /**
  * Builds a chainable mock mimicking Supabase's PostgrestFilterBuilder: every filter method
@@ -376,18 +380,23 @@ describe('agent/tools.mjs', () => {
         const result = await executeTool('search_memory', { query: 'refunds lately' }, CTX);
 
         expect(embedTextMock).toHaveBeenCalledWith('refunds lately');
-        expect(searchDocumentsMock).toHaveBeenCalledWith('biz-1', [0.1, 0.2], 5);
+        expect(searchDocumentsMock).toHaveBeenCalledWith(
+          { businessId: 'biz-1', actorId: 'legacy_demo', accessMode: 'legacy_demo' },
+          [0.1, 0.2],
+          5
+        );
         expect(result).toEqual({ results: [{ id: 'doc-1', distance: 0.05 }] });
       });
 
-      it('honours a custom k', async () => {
+      it('honours a custom k and custom principal', async () => {
         embedTextMock.mockResolvedValueOnce([0.1]);
         searchDocumentsMock.mockResolvedValueOnce([]);
         const { executeTool } = await import('../tools.mjs');
+        const customPrincipal = { businessId: 'biz-1', actorId: 'u-100', accessMode: 'authenticated' };
 
-        await executeTool('search_memory', { query: 'milk', k: 2 }, CTX);
+        await executeTool('search_memory', { query: 'milk', k: 2 }, { ...CTX, principal: customPrincipal });
 
-        expect(searchDocumentsMock).toHaveBeenCalledWith('biz-1', [0.1], 2);
+        expect(searchDocumentsMock).toHaveBeenCalledWith(customPrincipal, [0.1], 2);
       });
 
       it('rejects an empty query', async () => {
@@ -396,30 +405,69 @@ describe('agent/tools.mjs', () => {
           'query is required'
         );
       });
+
+      it('rejects tool execution when ctx is missing or null', async () => {
+        const { executeTool } = await import('../tools.mjs');
+        await expect(executeTool('search_memory', { query: 'test' }, null)).rejects.toThrow(
+          'tool context is required'
+        );
+      });
+
+      it('rejects tool execution when ctx.principal is missing', async () => {
+        const { executeTool } = await import('../tools.mjs');
+        const noPrincipalCtx = { businessId: 'demo-cafe' };
+        await expect(executeTool('search_memory', { query: 'test' }, noPrincipalCtx)).rejects.toThrow(
+          'ctx.principal is required'
+        );
+      });
+
+      it('rejects tool execution when ctx.businessId disagrees with ctx.principal.businessId', async () => {
+        const { executeTool } = await import('../tools.mjs');
+        const mismatchedCtx = {
+          businessId: 'biz-A',
+          principal: { businessId: 'biz-B', actorId: 'u-1', accessMode: 'authenticated' },
+        };
+        await expect(executeTool('search_memory', { query: 'test' }, mismatchedCtx)).rejects.toThrow(
+          'businessId mismatch in tool context'
+        );
+      });
+
+      it('rejects tool execution when ctx.principal shape is invalid', async () => {
+        const { executeTool } = await import('../tools.mjs');
+        const invalidCtx = {
+          principal: { businessId: 'biz-A' }, // missing actorId/accessMode
+        };
+        await expect(executeTool('search_memory', { query: 'test' }, invalidCtx)).rejects.toThrow(
+          'invalid principal shape in tool context'
+        );
+      });
     });
 
     describe('save_note / list_notes', () => {
-      it('saves a note tagged with source=chat', async () => {
+      it('saves a note tagged with source=chat and principal', async () => {
         saveNoteMock.mockResolvedValueOnce('note-1');
         const { executeTool } = await import('../tools.mjs');
 
         const result = await executeTool('save_note', { content: 'winter menu in November' }, CTX);
 
-        expect(saveNoteMock).toHaveBeenCalledWith({
-          businessId: 'biz-1',
-          content: 'winter menu in November',
-          source: 'chat',
-        });
+        expect(saveNoteMock).toHaveBeenCalledWith(
+          { businessId: 'biz-1', actorId: 'legacy_demo', accessMode: 'legacy_demo' },
+          { content: 'winter menu in November', source: 'chat' }
+        );
         expect(result).toEqual({ id: 'note-1', content: 'winter menu in November', saved: true });
       });
 
-      it('lists notes for the business', async () => {
+      it('lists notes for the business using principal', async () => {
         listNotesMock.mockResolvedValueOnce([{ id: 'note-1', content: 'x' }]);
         const { executeTool } = await import('../tools.mjs');
 
         const result = await executeTool('list_notes', {}, CTX);
 
-        expect(listNotesMock).toHaveBeenCalledWith('biz-1');
+        expect(listNotesMock).toHaveBeenCalledWith({
+          businessId: 'biz-1',
+          actorId: 'legacy_demo',
+          accessMode: 'legacy_demo',
+        });
         expect(result).toEqual({ notes: [{ id: 'note-1', content: 'x' }] });
       });
     });
@@ -435,20 +483,22 @@ describe('agent/tools.mjs', () => {
           CTX
         );
 
-        expect(saveDraftMock).toHaveBeenCalledWith({
-          businessId: 'biz-1',
-          conversationId: 'conv-1',
-          kind: 'purchase_order',
-          payload: {
+        expect(saveDraftMock).toHaveBeenCalledWith(
+          { businessId: 'biz-1', actorId: 'legacy_demo', accessMode: 'legacy_demo' },
+          {
+            conversationId: 'conv-1',
             kind: 'purchase_order',
-            supplier: null,
-            items: [
-              { name: 'coffee beans', quantity: 20, unit: 'kg' },
-              { name: 'milk', quantity: 30, unit: 'L' },
-            ],
-            notes: null,
-          },
-        });
+            payload: {
+              kind: 'purchase_order',
+              supplier: null,
+              items: [
+                { name: 'coffee beans', quantity: 20, unit: 'kg' },
+                { name: 'milk', quantity: 30, unit: 'L' },
+              ],
+              notes: null,
+            },
+          }
+        );
         expect(result).toEqual({
           id: 'draft-1',
           kind: 'purchase_order',

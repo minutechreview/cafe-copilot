@@ -39,7 +39,6 @@ function assertStagingUrl(url) {
   }
 }
 
-/** Yields every YYYY-MM-DD date from startIso to endIso inclusive. */
 function* dateRange(startIso, endIso) {
   let cursor = new Date(`${startIso}T00:00:00Z`).valueOf();
   const end = new Date(`${endIso}T00:00:00Z`).valueOf();
@@ -49,7 +48,6 @@ function* dateRange(startIso, endIso) {
   }
 }
 
-/** Narrative + compact stats text — what gets embedded and shown back via search_memory. */
 function buildDocumentContent(summary) {
   const k = summary.kpis;
   const c = summary.cash;
@@ -82,10 +80,14 @@ async function main() {
 
   const supabase = await authenticate();
 
-  // Intentionally sequential (not Promise.all): one summary query + one embedding call per
-  // date, easier to reason about and to read the log of as it runs.
   let embedded = 0;
   let skipped = 0;
+  const principal = {
+    businessId,
+    actorId: 'legacy_demo',
+    accessMode: 'legacy_demo',
+  };
+
   for (const date of dateRange(SEED_START, SEED_END)) {
     const summary = await generateDailySummary({ supabase, businessId, date });
     if (!summary) {
@@ -95,8 +97,7 @@ async function main() {
     }
     const content = buildDocumentContent(summary);
     const embedding = await embedText(content);
-    await upsertDocument({
-      businessId,
+    await upsertDocument(principal, {
       docType: 'daily_summary',
       docDate: date,
       content,
