@@ -9,9 +9,9 @@
 // every "does this already exist" check below uses a Get* call on the exact resource name and
 // branches on the not-found error, never a List call.
 //
-// Usage: node scripts/deploy-lambda.mjs [extraCorsOrigin]
-//   extraCorsOrigin - an additional allowed CORS origin (e.g. the real Cloudflare Pages URL,
-//   once known) merged with the built-in defaults. Re-running this script is always safe:
+// Usage: node scripts/deploy-lambda.mjs
+//   CORS origins and request/cost guardrails must be configured in .env.local. Re-running
+//   this script is always safe:
 //   every step below is a create-if-missing-else-update operation.
 import { config as loadEnv } from 'dotenv';
 import { readFile } from 'node:fs/promises';
@@ -46,12 +46,6 @@ const ROLE_NAME = 'cafe-copilot-agent-role';
 const FUNCTION_NAME = 'cafe-copilot-agent';
 const ZIP_PATH = path.join(AGENT_DIR, 'dist-lambda', 'function.zip');
 const RUNTIME_CANDIDATES = ['nodejs22.x', 'nodejs20.x'];
-const DEFAULT_CORS_ORIGINS = [
-  'http://localhost:5173',
-  'https://cafe-copilot.pages.dev',
-  // POS staging dashboard hosts the floating copilot widget (post-C6 owner request).
-  'https://phase-8-auth.project-pos.pages.dev',
-];
 // Only these keys from .env.local are needed by the Lambda code (see handler.mjs, tools.mjs,
 // embeddings.mjs, pos-client.mjs, memory/store.mjs) — AWS_* vars are deliberately excluded:
 // AWS_REGION is provided by the Lambda runtime automatically and can't be overridden, and no
@@ -67,6 +61,14 @@ const LAMBDA_ENV_KEYS = [
   'POS_SUPABASE_ANON_KEY',
   'DEMO_OWNER_EMAIL',
   'DEMO_OWNER_PASSWORD',
+  'DEMO_MODE_ENABLED',
+  'WEB_ORIGIN',
+  'COPILOT_ALLOWED_ORIGINS',
+  'COPILOT_REQUEST_TIMEOUT_MS',
+  'COPILOT_RATE_LIMIT_MAX_REQUESTS',
+  'COPILOT_RATE_LIMIT_WINDOW_MS',
+  'COPILOT_MAX_INPUT_CHARS',
+  'BEDROCK_MAX_TOKENS',
 ];
 
 const region = process.env.AWS_REGION;
@@ -79,6 +81,48 @@ const lambdaClient = new LambdaClient({ region });
 const sts = new STSClient({ region });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function requiredPositiveInteger(name, maximum) {
+  const raw = process.env[name];
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0 || value > maximum) {
+    throw new Error(`${name} must be a positive integer no greater than ${maximum}`);
+  }
+  return value;
+}
+
+function configuredCorsOrigins() {
+  const rawOrigins = [process.env.WEB_ORIGIN, ...(process.env.COPILOT_ALLOWED_ORIGINS || '').split(',')]
+    .map((value) => value?.trim())
+    .filter(Boolean);
+  if (rawOrigins.length === 0) throw new Error('WEB_ORIGIN must name at least one allowed browser origin');
+
+  return [...new Set(rawOrigins.map((origin) => {
+    let parsed;
+    try {
+      parsed = new URL(origin);
+    } catch {
+      throw new Error(`Invalid CORS origin: ${origin}`);
+    }
+    if (parsed.origin !== origin || !['https:', 'http:'].includes(parsed.protocol)) {
+      throw new Error(`CORS origin must be an exact http(s) origin: ${origin}`);
+    }
+    return origin;
+  }))];
+}
+
+/** Refuse to deploy if an operator omitted the baseline time and cost ceilings. */
+function assertDeploySafetyConfiguration() {
+  if (!['true', 'false'].includes(process.env.DEMO_MODE_ENABLED)) {
+    throw new Error('DEMO_MODE_ENABLED must be explicitly "true" or "false"');
+  }
+  requiredPositiveInteger('BEDROCK_MAX_TOKENS', 2_000);
+  requiredPositiveInteger('COPILOT_MAX_INPUT_CHARS', 12_000);
+  requiredPositiveInteger('COPILOT_RATE_LIMIT_MAX_REQUESTS', 1_000);
+  requiredPositiveInteger('COPILOT_RATE_LIMIT_WINDOW_MS', 3_600_000);
+  requiredPositiveInteger('COPILOT_REQUEST_TIMEOUT_MS', 54_000);
+  configuredCorsOrigins();
+}
 
 const TRUST_POLICY = {
   Version: '2012-10-17',
@@ -189,7 +233,7 @@ async function createFunctionWithRetry({ runtime, roleArn, zipBuffer, envVars })
           Handler: 'index.handler',
           Code: { ZipFile: zipBuffer },
           MemorySize: 512,
-          Timeout: 60,
+          Timeout: 55,
           Environment: { Variables: envVars },
           Publish: false,
         })
@@ -240,7 +284,7 @@ async function updateExistingFunction({ roleArn, zipBuffer, envVars, runtime }) 
       Handler: 'index.handler',
       Runtime: runtime,
       MemorySize: 512,
-      Timeout: 60,
+      Timeout: 55,
       Environment: { Variables: envVars },
     })
   );
@@ -261,18 +305,10 @@ async function ensureFunction({ roleArn, zipBuffer, envVars }) {
 /** Cost guardrail: caps concurrent executions so a runaway loop can't rack up an open-ended
  * Bedrock/Lambda bill. */
 async function ensureConcurrency() {
-  try {
-    await lambdaClient.send(
-      new PutFunctionConcurrencyCommand({ FunctionName: FUNCTION_NAME, ReservedConcurrentExecutions: 5 })
-    );
-    console.log('[deploy] reserved concurrency set to 5');
-  } catch (err) {
-    // New/small AWS accounts have a low total concurrency quota (often 10), and reserving any
-    // of it would drop the unreserved pool below AWS's required minimum -- a 400. The
-    // reservation is a nice-to-have cost guardrail, not a correctness requirement (per-reply
-    // token caps and the billing alarm remain), so warn and continue instead of failing.
-    console.warn(`[deploy] WARNING: could not reserve concurrency (${err.name}). Continuing without it.`);
-  }
+  await lambdaClient.send(
+    new PutFunctionConcurrencyCommand({ FunctionName: FUNCTION_NAME, ReservedConcurrentExecutions: 5 })
+  );
+  console.log('[deploy] reserved concurrency set to 5');
 }
 
 async function ensureFunctionUrl(corsOrigins) {
@@ -287,7 +323,12 @@ async function ensureFunctionUrl(corsOrigins) {
     FunctionName: FUNCTION_NAME,
     AuthType: 'NONE',
     InvokeMode: 'RESPONSE_STREAM',
-    Cors: { AllowOrigins: corsOrigins, AllowMethods: ['POST'], AllowHeaders: ['content-type'] },
+    Cors: {
+      AllowOrigins: corsOrigins,
+      AllowMethods: ['POST'],
+      AllowHeaders: ['content-type', 'authorization'],
+      AllowCredentials: true,
+    },
   };
 
   if (!existing) {
@@ -347,6 +388,7 @@ async function ensurePublicInvokePermission() {
 }
 
 async function main() {
+  assertDeploySafetyConfiguration();
   const accountId = await getAccountId();
   console.log(`[deploy] account ${accountId}, region ${region}`);
 
@@ -363,8 +405,7 @@ async function main() {
   const runtime = await ensureFunction({ roleArn, zipBuffer, envVars });
   await ensureConcurrency();
 
-  const extraOrigin = process.argv[2];
-  const corsOrigins = Array.from(new Set([...DEFAULT_CORS_ORIGINS, ...(extraOrigin ? [extraOrigin] : [])]));
+  const corsOrigins = configuredCorsOrigins();
   const functionUrl = await ensureFunctionUrl(corsOrigins);
   await ensurePublicInvokePermission();
 

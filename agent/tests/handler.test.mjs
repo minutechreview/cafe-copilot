@@ -526,3 +526,105 @@ describe('handler', () => {
     });
   });
 });
+
+describe('resolveTrustedChatInput transport boundary', () => {
+  const ORIGINAL_ENV = { ...process.env };
+
+  beforeEach(() => {
+    process.env.DEMO_MODE_ENABLED = 'true';
+    process.env.DEMO_BUSINESS_ID = 'demo-cafe';
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+  });
+
+  it('converts an authenticated auth result into a minimal principal and fresh scoped POS client', async () => {
+    const resolveAuth = vi.fn().mockResolvedValue({
+      mode: 'authenticated',
+      userId: 'user-1',
+      businessId: 'biz-1',
+      accessToken: 'SECRET_TOKEN_SHOULD_NOT_BE_FORWARDED',
+    });
+    const createAuthenticatedPosClient = vi.fn().mockReturnValue({ scoped: true });
+    const createDemoPosClient = vi.fn();
+    const { resolveTrustedChatInput } = await import('../handler.mjs');
+
+    const input = await resolveTrustedChatInput(
+      {
+        headers: { authorization: 'Bearer SECRET_TOKEN_SHOULD_NOT_BE_FORWARDED' },
+        payload: { mode: 'authenticated', message: 'hello', businessId: 'biz-1', conversationId: 'c-1' },
+      },
+      { resolveAuth, createAuthenticatedPosClient, createDemoPosClient }
+    );
+
+    expect(input).toEqual({
+      message: 'hello',
+      conversationId: 'c-1',
+      principal: { businessId: 'biz-1', actorId: 'user-1', accessMode: 'authenticated' },
+      posClient: { scoped: true },
+    });
+    expect(createAuthenticatedPosClient).toHaveBeenCalledWith('SECRET_TOKEN_SHOULD_NOT_BE_FORWARDED');
+    expect(createDemoPosClient).not.toHaveBeenCalled();
+    expect(input).not.toHaveProperty('accessToken');
+  });
+
+  it('preserves an opaque demo session across requests and does not share its actor', async () => {
+    const resolveAuth = vi.fn().mockResolvedValue({
+      mode: 'demo',
+      demoSessionId: 'demo-session-11111111-1111-4111-8111-111111111111',
+    });
+    const createDemoPosClient = vi.fn().mockResolvedValue({ demo: true });
+    const { getDemoSessionIdFromCookie, resolveTrustedChatInput } = await import('../handler.mjs');
+    const existingSession = getDemoSessionIdFromCookie(
+      'theme=dark; cafe_copilot_demo_session=demo-session-22222222-2222-4222-8222-222222222222'
+    );
+
+    const input = await resolveTrustedChatInput(
+      { headers: {}, payload: { mode: 'demo', message: 'hello' }, demoSessionId: existingSession },
+      { resolveAuth, createDemoPosClient }
+    );
+
+    expect(input.principal).toEqual({
+      businessId: 'demo-cafe',
+      actorId: 'demo-session-22222222-2222-4222-8222-222222222222',
+      accessMode: 'demo',
+    });
+    expect(input.demoSessionId).toBe('demo-session-22222222-2222-4222-8222-222222222222');
+  });
+
+  it('does not fall back to demo when authenticated resolution rejects', async () => {
+    const authError = new Error('Invalid or expired authentication token.');
+    authError.status = 401;
+    const resolveAuth = vi.fn().mockRejectedValue(authError);
+    const createDemoPosClient = vi.fn();
+    const { resolveTrustedChatInput } = await import('../handler.mjs');
+
+    await expect(
+      resolveTrustedChatInput(
+        { headers: { authorization: 'Bearer bad-token' }, payload: { mode: 'authenticated', message: 'hello', businessId: 'biz-1' } },
+        { resolveAuth, createDemoPosClient }
+      )
+    ).rejects.toMatchObject({ status: 401 });
+    expect(createDemoPosClient).not.toHaveBeenCalled();
+  });
+
+  it('keeps legacy anonymous standalone requests behind explicit demo enablement', async () => {
+    const resolveAuth = vi.fn().mockResolvedValue({
+      mode: 'demo',
+      demoSessionId: 'demo-session-33333333-3333-4333-8333-333333333333',
+    });
+    const { resolveTrustedChatInput } = await import('../handler.mjs');
+
+    await resolveTrustedChatInput(
+      { headers: {}, payload: { message: 'hello' } },
+      { resolveAuth, createDemoPosClient: vi.fn().mockResolvedValue({}) }
+    );
+    expect(resolveAuth).toHaveBeenCalledWith({ headers: {}, body: { message: 'hello', mode: 'demo' } });
+
+    process.env.DEMO_MODE_ENABLED = 'false';
+    await expect(
+      resolveTrustedChatInput({ headers: {}, payload: { message: 'hello' } }, { resolveAuth })
+    ).rejects.toMatchObject({ statusCode: 403, message: 'Demo access is not available.' });
+  });
+});

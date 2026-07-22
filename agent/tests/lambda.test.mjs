@@ -1,8 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const chatHandlerMock = vi.fn();
+const resolveTrustedChatInputMock = vi.fn();
+const getDemoSessionIdFromCookieMock = vi.fn();
 
-vi.mock('../handler.mjs', () => ({ handler: chatHandlerMock }));
+vi.mock('../handler.mjs', () => ({
+  handler: chatHandlerMock,
+  resolveTrustedChatInput: resolveTrustedChatInputMock,
+  getDemoSessionIdFromCookie: getDemoSessionIdFromCookieMock,
+}));
 
 /** Minimal fake of a Lambda response-stream object: records every write() call and whether
  * end() was called, so tests can assert on the SSE bytes without a real Lambda runtime. */
@@ -28,6 +34,18 @@ function installAwsLambdaGlobal() {
 
 beforeEach(() => {
   chatHandlerMock.mockReset();
+  resolveTrustedChatInputMock.mockReset();
+  getDemoSessionIdFromCookieMock.mockReset();
+  resolveTrustedChatInputMock.mockResolvedValue({
+    message: 'hi',
+    principal: { businessId: 'demo-cafe', actorId: 'demo-session-00000000-0000-4000-8000-000000000000', accessMode: 'demo' },
+    posClient: { demo: true },
+  });
+  getDemoSessionIdFromCookieMock.mockReturnValue(null);
+  delete process.env.COPILOT_RATE_LIMIT_MAX_REQUESTS;
+  delete process.env.COPILOT_RATE_LIMIT_WINDOW_MS;
+  delete process.env.COPILOT_REQUEST_TIMEOUT_MS;
+  delete process.env.WEB_ORIGIN;
   installAwsLambdaGlobal();
 });
 
@@ -119,5 +137,108 @@ describe('agent/lambda.mjs', () => {
 
     expect(responseStream.statusCode).toBe(500);
     expect(responseStream.headers['Content-Type']).toBe('application/json');
+  });
+
+  it('resolves authentication before SSE and passes only a trusted principal and scoped client to chat', async () => {
+    const trustedInput = {
+      message: 'How was today?',
+      conversationId: 'conversation-1',
+      principal: { businessId: 'biz-1', actorId: 'user-1', accessMode: 'authenticated' },
+      posClient: { scoped: true },
+    };
+    resolveTrustedChatInputMock.mockResolvedValueOnce(trustedInput);
+    chatHandlerMock.mockImplementation(async ({ onEvent }) => onEvent({ type: 'done', conversationId: 'conversation-1', reply: 'Done' }));
+
+    const { handler } = await import('../lambda.mjs');
+    const responseStream = fakeResponseStream();
+    await handler(
+      {
+        headers: { Authorization: 'Bearer SECRET_TOKEN_MUST_NOT_REACH_CHAT' },
+        body: JSON.stringify({ mode: 'authenticated', message: 'How was today?', businessId: 'biz-1' }),
+      },
+      responseStream
+    );
+
+    expect(resolveTrustedChatInputMock).toHaveBeenCalledWith({
+      headers: { Authorization: 'Bearer SECRET_TOKEN_MUST_NOT_REACH_CHAT' },
+      payload: { mode: 'authenticated', message: 'How was today?', businessId: 'biz-1' },
+      demoSessionId: null,
+    });
+    expect(chatHandlerMock).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'How was today?',
+      conversationId: 'conversation-1',
+      principal: trustedInput.principal,
+      posClient: trustedInput.posClient,
+    }));
+    expect(chatHandlerMock.mock.calls[0][0]).not.toHaveProperty('accessToken');
+    expect(responseStream.statusCode).toBe(200);
+  });
+
+  it('returns an owner-friendly pre-stream auth denial and never invokes chat', async () => {
+    const authError = new Error('Invalid or expired authentication token.');
+    authError.status = 401;
+    resolveTrustedChatInputMock.mockRejectedValueOnce(authError);
+
+    const { handler } = await import('../lambda.mjs');
+    const responseStream = fakeResponseStream();
+    await handler({ body: JSON.stringify({ mode: 'authenticated', message: 'hi', businessId: 'biz-1' }) }, responseStream);
+
+    expect(responseStream.statusCode).toBe(401);
+    expect(responseStream.headers['Content-Type']).toBe('application/json');
+    expect(JSON.parse(textOf(responseStream))).toEqual({ error: 'Invalid or expired authentication token.' });
+    expect(chatHandlerMock).not.toHaveBeenCalled();
+  });
+
+  it('throttles before authentication or streaming when an IP exceeds the configured request ceiling', async () => {
+    process.env.COPILOT_RATE_LIMIT_MAX_REQUESTS = '1';
+    process.env.COPILOT_RATE_LIMIT_WINDOW_MS = '60000';
+    const { handler, resetRateLimitsForTests } = await import('../lambda.mjs');
+    resetRateLimitsForTests();
+    const event = {
+      requestContext: { http: { sourceIp: '203.0.113.7' } },
+      body: JSON.stringify({ mode: 'demo', message: 'hi' }),
+    };
+    chatHandlerMock.mockImplementation(async ({ onEvent }) => onEvent({ type: 'done', conversationId: 'c1', reply: 'Done' }));
+
+    await handler(event, fakeResponseStream());
+    const blocked = fakeResponseStream();
+    await handler(event, blocked);
+
+    expect(blocked.statusCode).toBe(429);
+    expect(JSON.parse(textOf(blocked))).toEqual({ error: 'Too many Copilot requests. Please wait a moment and try again.' });
+    expect(resolveTrustedChatInputMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a cross-site browser request before authentication or streaming', async () => {
+    process.env.WEB_ORIGIN = 'https://cafe-copilot.pages.dev';
+    const { handler } = await import('../lambda.mjs');
+    const responseStream = fakeResponseStream();
+    await handler(
+      {
+        headers: { Origin: 'https://attacker.example', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'demo', message: 'hi' }),
+      },
+      responseStream
+    );
+
+    expect(responseStream.statusCode).toBe(403);
+    expect(JSON.parse(textOf(responseStream))).toEqual({ error: 'Origin is not allowed.' });
+    expect(resolveTrustedChatInputMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-JSON request before authentication or streaming', async () => {
+    const { handler } = await import('../lambda.mjs');
+    const responseStream = fakeResponseStream();
+    await handler(
+      {
+        headers: { 'content-type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({ mode: 'demo', message: 'hi' }),
+      },
+      responseStream
+    );
+
+    expect(responseStream.statusCode).toBe(400);
+    expect(JSON.parse(textOf(responseStream))).toEqual({ error: 'Content-Type must be application/json.' });
+    expect(resolveTrustedChatInputMock).not.toHaveBeenCalled();
   });
 });
