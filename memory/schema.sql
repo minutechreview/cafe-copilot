@@ -8,11 +8,12 @@
 CREATE TABLE IF NOT EXISTS conversations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id TEXT NOT NULL,
-  actor_id TEXT,
+  actor_id TEXT NOT NULL DEFAULT 'legacy_demo',
   access_mode TEXT NOT NULL DEFAULT 'legacy_demo' CHECK (access_mode IN ('authenticated', 'demo', 'legacy_demo')),
   title TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT conversations_id_business_actor_mode_key UNIQUE (id, business_id, actor_id, access_mode)
 );
 
 CREATE INDEX IF NOT EXISTS conversations_principal_idx
@@ -20,7 +21,7 @@ CREATE INDEX IF NOT EXISTS conversations_principal_idx
 
 CREATE TABLE IF NOT EXISTS messages (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  conversation_id UUID NOT NULL REFERENCES conversations (id),
+  conversation_id UUID NOT NULL REFERENCES conversations (id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
   content TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -48,12 +49,13 @@ CREATE INDEX IF NOT EXISTS notes_business_created_idx
 CREATE TABLE IF NOT EXISTS drafts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id TEXT NOT NULL,
-  actor_id TEXT,
+  actor_id TEXT NOT NULL DEFAULT 'legacy_demo',
   access_mode TEXT NOT NULL DEFAULT 'legacy_demo' CHECK (access_mode IN ('authenticated', 'demo', 'legacy_demo')),
-  conversation_id UUID REFERENCES conversations (id),
+  conversation_id UUID,
   kind TEXT NOT NULL,
   payload JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT drafts_conversation_fk FOREIGN KEY (conversation_id, business_id, actor_id, access_mode) REFERENCES conversations (id, business_id, actor_id, access_mode) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS drafts_principal_idx
@@ -74,6 +76,9 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 
 CREATE VECTOR INDEX IF NOT EXISTS documents_embedding_idx ON documents (embedding);
+
+CREATE UNIQUE INDEX IF NOT EXISTS documents_business_type_date_key
+  ON documents (business_id, doc_type, doc_date) WHERE doc_date IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS documents_business_type_date_idx
   ON documents (business_id, doc_type, doc_date);
