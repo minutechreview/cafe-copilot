@@ -81,13 +81,13 @@ describe('memory/store.mjs & migrations', () => {
       expect(clientQueryMock).toHaveBeenCalledWith('INSERT INTO schema_migrations (version) VALUES ($1)', ['001_principal_ownership.sql']);
     });
 
-    it('tolerates non-existent tables during fresh-database bootstrap preflight', async () => {
+    it('proves fresh-database bootstrap path runs cleanly when tables do not exist', async () => {
       const client = { query: clientQueryMock };
       clientQueryMock
         .mockResolvedValueOnce({ rows: [] }) // schema_migrations table creation
         .mockResolvedValueOnce({ rows: [] }) // check if 001 is pending -> pending!
-        .mockResolvedValueOnce({ rows: [{ rel: null }] }) // to_regclass drafts -> null (fresh DB!)
-        .mockResolvedValueOnce({ rows: [{ rel: null }] }) // to_regclass docs -> null (fresh DB!)
+        .mockResolvedValueOnce({ rows: [{ rel: null }] }) // to_regclass drafts -> null (fresh DB)
+        .mockResolvedValueOnce({ rows: [{ rel: null }] }) // to_regclass docs -> null (fresh DB)
         .mockResolvedValueOnce(undefined) // BEGIN schema.sql
         .mockResolvedValueOnce(undefined) // schema.sql
         .mockResolvedValueOnce(undefined) // COMMIT schema.sql
@@ -102,10 +102,12 @@ describe('memory/store.mjs & migrations', () => {
 
       // Drafts/docs count queries were NOT executed because tables didn't exist yet
       expect(clientQueryMock).not.toHaveBeenCalledWith(expect.stringContaining('FROM drafts d'));
+      expect(clientQueryMock).not.toHaveBeenCalledWith(expect.stringContaining('GROUP BY business_id, doc_type, doc_date'));
       expect(clientQueryMock).toHaveBeenNthCalledWith(5, 'BEGIN');
+      expect(clientQueryMock).toHaveBeenCalledWith('INSERT INTO schema_migrations (version) VALUES ($1)', ['001_principal_ownership.sql']);
     });
 
-    it('fails preflight check BEFORE schema.sql DDL starts if invalid drafts exist', async () => {
+    it('fails preflight check BEFORE schema.sql DDL starts if invalid drafts exist on legacy schema', async () => {
       const client = { query: clientQueryMock };
       clientQueryMock
         .mockResolvedValueOnce({ rows: [] }) // schema_migrations table creation
@@ -124,7 +126,7 @@ describe('memory/store.mjs & migrations', () => {
       expect(clientQueryMock).not.toHaveBeenCalledWith('BEGIN');
     });
 
-    it('fails preflight check BEFORE schema.sql DDL starts if duplicate dated documents exist', async () => {
+    it('proves duplicate legacy documents are detected before schema.sql executes', async () => {
       const client = { query: clientQueryMock };
       clientQueryMock
         .mockResolvedValueOnce({ rows: [] }) // schema_migrations table creation
@@ -132,13 +134,14 @@ describe('memory/store.mjs & migrations', () => {
         .mockResolvedValueOnce({ rows: [{ rel: 'drafts' }] }) // to_regclass drafts
         .mockResolvedValueOnce({ rows: [{ rel: 'documents' }] }) // to_regclass docs
         .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight drafts
-        .mockResolvedValueOnce({ rows: [{ count: 3 }] }); // preflight docs finds 3 duplicate groups
+        .mockResolvedValueOnce({ rows: [{ count: 3 }] }); // preflight docs finds 3 duplicate groups in legacy data!
 
       const { runMigrations } = await import('../migrate.mjs');
       await expect(runMigrations({ client, embeddingDim: 1536 })).rejects.toThrow(
         /Preflight check failed: found 0 invalid draft\(s\).*and 3 duplicate dated document group\(s\)/
       );
 
+      // Explicitly prove schema.sql execution ('BEGIN') was NEVER called
       expect(clientQueryMock).not.toHaveBeenCalledWith('BEGIN');
     });
 
