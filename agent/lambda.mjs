@@ -26,6 +26,7 @@ const MAX_REQUEST_DEADLINE_MS = 54_000;
 const DEFAULT_RATE_LIMIT_REQUESTS = 20;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 const MAX_RATE_LIMIT_KEYS = 10_000;
+const DEFAULT_MAX_BODY_BYTES = 20_000;
 const rateLimitWindows = new Map();
 
 function positiveIntegerEnv(name, fallback, maximum) {
@@ -71,7 +72,7 @@ export function assertSafeBrowserRequest(event) {
 
   const contentTypeEntry = Object.entries(headers).find(([key]) => key.toLowerCase() === 'content-type');
   const contentType = contentTypeEntry?.[1];
-  if (contentType && !/^application\/json(?:\s*;|$)/i.test(contentType)) {
+  if (!contentType || !/^application\/json(?:\s*;|$)/i.test(contentType)) {
     const error = new Error('Content-Type must be application/json.');
     error.statusCode = 400;
     throw error;
@@ -107,6 +108,12 @@ export function parseRequestPayload(event) {
     raw = Buffer.from(raw, 'base64').toString('utf8');
   }
   if (!raw) return {};
+  const maxBodyBytes = positiveIntegerEnv('COPILOT_MAX_BODY_BYTES', DEFAULT_MAX_BODY_BYTES, 100_000);
+  if (Buffer.byteLength(raw, 'utf8') > maxBodyBytes) {
+    const err = new Error('Request body is too large.');
+    err.statusCode = 413;
+    throw err;
+  }
   try {
     return JSON.parse(raw);
   } catch {
@@ -141,10 +148,10 @@ function respondJsonError(responseStream, statusCode, message) {
 }
 
 function clientErrorMessage(error, statusCode = error?.statusCode || error?.status) {
-  return [400, 401, 403, 429, 504].includes(statusCode) && error?.message ? error.message : GENERIC_ERROR;
+  return [400, 401, 403, 413, 429, 504].includes(statusCode) && error?.message ? error.message : GENERIC_ERROR;
 }
 
-async function runWithDeadline(input, onEvent) {
+function createRequestDeadline() {
   const { deadlineMs } = getTransportBudget();
   const controller = new AbortController();
   let timer;
@@ -156,11 +163,11 @@ async function runWithDeadline(input, onEvent) {
       reject(error);
     }, deadlineMs);
   });
-  try {
-    return await Promise.race([chatHandler({ ...input, onEvent, signal: controller.signal }), timedOut]);
-  } finally {
-    clearTimeout(timer);
-  }
+  return {
+    signal: controller.signal,
+    race: (operation) => Promise.race([operation, timedOut]),
+    clear: () => clearTimeout(timer),
+  };
 }
 
 function writeSseEvent(stream, event) {
@@ -184,14 +191,19 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream)
   }
 
   let input;
+  const deadline = createRequestDeadline();
   try {
     enforceRateLimit(event);
-    input = await resolveTrustedChatInput({
-      headers: event?.headers || {},
-      payload,
-      demoSessionId: getDemoSessionIdFromCookie(event?.headers?.cookie || event?.headers?.Cookie),
-    });
+    input = await deadline.race(
+      resolveTrustedChatInput({
+        headers: event?.headers || {},
+        payload,
+        demoSessionId: getDemoSessionIdFromCookie(event?.headers?.cookie || event?.headers?.Cookie),
+        signal: deadline.signal,
+      })
+    );
   } catch (err) {
+    deadline.clear();
     const statusCode = err?.statusCode || err?.status || 500;
     respondJsonError(responseStream, statusCode, clientErrorMessage(err, statusCode));
     return;
@@ -217,7 +229,7 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream)
   }
 
   try {
-    await runWithDeadline(input, writeEvent);
+    await deadline.race(chatHandler({ ...input, onEvent: writeEvent, signal: deadline.signal }));
     if (sse) {
       clearInterval(heartbeat);
       sse.end();
@@ -236,5 +248,7 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream)
       const statusCode = err?.statusCode || err?.status || 500;
       respondJsonError(responseStream, statusCode, clientErrorMessage(err, statusCode));
     }
+  } finally {
+    deadline.clear();
   }
 });

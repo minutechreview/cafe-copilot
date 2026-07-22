@@ -89,7 +89,7 @@ describe('agent/lambda.mjs', () => {
 
     const { handler } = await import('../lambda.mjs');
     const responseStream = fakeResponseStream();
-    await handler({ body: JSON.stringify({ message: 'hi' }) }, responseStream);
+    await handler({ headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'hi' }) }, responseStream);
 
     expect(responseStream.statusCode).toBe(200);
     expect(responseStream.headers['Content-Type']).toBe('text/event-stream');
@@ -101,7 +101,7 @@ describe('agent/lambda.mjs', () => {
   it('responds with a plain 400 JSON body for malformed request JSON, no SSE stream opened', async () => {
     const { handler } = await import('../lambda.mjs');
     const responseStream = fakeResponseStream();
-    await handler({ body: '{not json' }, responseStream);
+    await handler({ headers: { 'content-type': 'application/json' }, body: '{not json' }, responseStream);
 
     expect(responseStream.statusCode).toBe(400);
     expect(responseStream.headers['Content-Type']).toBe('application/json');
@@ -117,7 +117,7 @@ describe('agent/lambda.mjs', () => {
 
     const { handler } = await import('../lambda.mjs');
     const responseStream = fakeResponseStream();
-    await handler({ body: JSON.stringify({ message: 'hi' }) }, responseStream);
+    await handler({ headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'hi' }) }, responseStream);
 
     expect(responseStream.statusCode).toBe(200);
     expect(textOf(responseStream)).toContain(
@@ -133,7 +133,7 @@ describe('agent/lambda.mjs', () => {
 
     const { handler } = await import('../lambda.mjs');
     const responseStream = fakeResponseStream();
-    await handler({ body: JSON.stringify({ message: 'hi' }) }, responseStream);
+    await handler({ headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: 'hi' }) }, responseStream);
 
     expect(responseStream.statusCode).toBe(500);
     expect(responseStream.headers['Content-Type']).toBe('application/json');
@@ -153,16 +153,17 @@ describe('agent/lambda.mjs', () => {
     const responseStream = fakeResponseStream();
     await handler(
       {
-        headers: { Authorization: 'Bearer SECRET_TOKEN_MUST_NOT_REACH_CHAT' },
+        headers: { Authorization: 'Bearer SECRET_TOKEN_MUST_NOT_REACH_CHAT', 'content-type': 'application/json' },
         body: JSON.stringify({ mode: 'authenticated', message: 'How was today?', businessId: 'biz-1' }),
       },
       responseStream
     );
 
     expect(resolveTrustedChatInputMock).toHaveBeenCalledWith({
-      headers: { Authorization: 'Bearer SECRET_TOKEN_MUST_NOT_REACH_CHAT' },
+      headers: { Authorization: 'Bearer SECRET_TOKEN_MUST_NOT_REACH_CHAT', 'content-type': 'application/json' },
       payload: { mode: 'authenticated', message: 'How was today?', businessId: 'biz-1' },
       demoSessionId: null,
+      signal: expect.any(AbortSignal),
     });
     expect(chatHandlerMock).toHaveBeenCalledWith(expect.objectContaining({
       message: 'How was today?',
@@ -181,7 +182,7 @@ describe('agent/lambda.mjs', () => {
 
     const { handler } = await import('../lambda.mjs');
     const responseStream = fakeResponseStream();
-    await handler({ body: JSON.stringify({ mode: 'authenticated', message: 'hi', businessId: 'biz-1' }) }, responseStream);
+    await handler({ headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: 'authenticated', message: 'hi', businessId: 'biz-1' }) }, responseStream);
 
     expect(responseStream.statusCode).toBe(401);
     expect(responseStream.headers['Content-Type']).toBe('application/json');
@@ -195,6 +196,7 @@ describe('agent/lambda.mjs', () => {
     const { handler, resetRateLimitsForTests } = await import('../lambda.mjs');
     resetRateLimitsForTests();
     const event = {
+      headers: { 'content-type': 'application/json' },
       requestContext: { http: { sourceIp: '203.0.113.7' } },
       body: JSON.stringify({ mode: 'demo', message: 'hi' }),
     };
@@ -236,6 +238,16 @@ describe('agent/lambda.mjs', () => {
       },
       responseStream
     );
+
+    expect(responseStream.statusCode).toBe(400);
+    expect(JSON.parse(textOf(responseStream))).toEqual({ error: 'Content-Type must be application/json.' });
+    expect(resolveTrustedChatInputMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing Content-Type before authentication or streaming', async () => {
+    const { handler } = await import('../lambda.mjs');
+    const responseStream = fakeResponseStream();
+    await handler({ body: JSON.stringify({ mode: 'demo', message: 'hi' }) }, responseStream);
 
     expect(responseStream.statusCode).toBe(400);
     expect(JSON.parse(textOf(responseStream))).toEqual({ error: 'Content-Type must be application/json.' });

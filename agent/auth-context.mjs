@@ -1,5 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
+import { assertStagingUrl } from './pos-client.mjs';
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) {
+    throw new AuthContextError('The Copilot request took too long. Please try again.', 504);
+  }
+}
 
 /**
  * Error thrown during auth context resolution with distinct HTTP status codes (400, 401, 403, 500).
@@ -95,6 +102,9 @@ function hasField(input, body, fieldName) {
 export async function resolveAuthContext(input = {}, options = {}) {
   const headers = input.headers || {};
   const body = input.body || {};
+  const signal = options.signal || input.signal;
+
+  throwIfAborted(signal);
 
   const mode = input.mode || body.mode;
   const businessId = input.businessId !== undefined ? input.businessId : body.businessId;
@@ -113,6 +123,7 @@ export async function resolveAuthContext(input = {}, options = {}) {
       throw new AuthContextError('Demo mode requests must not include a businessId.', 400);
     }
 
+    throwIfAborted(signal);
     const demoSessionId = `demo-session-${randomUUID()}`;
 
     return {
@@ -140,9 +151,11 @@ export async function resolveAuthContext(input = {}, options = {}) {
 
     let supabase;
     try {
+      throwIfAborted(signal);
       if (options.supabaseClient) {
         supabase = options.supabaseClient;
       } else if (options.createSupabaseClient) {
+        assertStagingUrl(process.env.POS_SUPABASE_URL);
         supabase = options.createSupabaseClient(token);
       } else {
         const url = process.env.POS_SUPABASE_URL;
@@ -150,19 +163,24 @@ export async function resolveAuthContext(input = {}, options = {}) {
         if (!url || !anonKey) {
           throw new Error('POS Supabase configuration missing');
         }
+        assertStagingUrl(url);
         supabase = createClient(url, anonKey, {
           auth: { persistSession: false, autoRefreshToken: false },
           global: { headers: { Authorization: `Bearer ${token}` } },
         });
       }
     } catch {
+      if (signal?.aborted) throw new AuthContextError('The Copilot request took too long. Please try again.', 504);
       throw new AuthContextError('Failed to initialize authentication client.', 500);
     }
 
     let userResult;
     try {
+      throwIfAborted(signal);
       userResult = await supabase.auth.getUser(token);
+      throwIfAborted(signal);
     } catch {
+      if (signal?.aborted) throw new AuthContextError('The Copilot request took too long. Please try again.', 504);
       throw new AuthContextError('Invalid or expired authentication token.', 401);
     }
 
@@ -175,7 +193,8 @@ export async function resolveAuthContext(input = {}, options = {}) {
 
     let memberships;
     try {
-      const queryResult = await supabase
+      throwIfAborted(signal);
+      let membershipQuery = supabase
         .from('business_memberships')
         .select('role, status')
         .eq('user_id', userId)
@@ -183,11 +202,18 @@ export async function resolveAuthContext(input = {}, options = {}) {
         .in('role', ['owner', 'manager'])
         .eq('status', 'active');
 
+      if (signal && typeof membershipQuery.abortSignal === 'function') {
+        membershipQuery = membershipQuery.abortSignal(signal);
+      }
+      const queryResult = await membershipQuery;
+      throwIfAborted(signal);
+
       if (queryResult.error) {
         throw queryResult.error;
       }
       memberships = queryResult.data;
     } catch {
+      if (signal?.aborted) throw new AuthContextError('The Copilot request took too long. Please try again.', 504);
       throw new AuthContextError('Failed to query membership access.', 500);
     }
 

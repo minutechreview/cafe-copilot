@@ -43,7 +43,7 @@ function readEmbedding(modelId, parsedBody) {
  * @param {string} text
  * @returns {Promise<number[]>}
  */
-export async function embedText(text) {
+export async function embedText(text, { signal } = {}) {
   if (typeof text !== 'string' || !text.trim()) {
     throw new Error('embedText requires a non-empty string');
   }
@@ -53,14 +53,17 @@ export async function embedText(text) {
     throw new Error('BEDROCK_EMBEDDING_MODEL_ID is not configured');
   }
 
+  if (signal?.aborted) throw new Error('Request deadline exceeded');
   const response = await client.send(
     new InvokeModelCommand({
       modelId,
       contentType: 'application/json',
       accept: 'application/json',
       body: JSON.stringify(buildRequestBody(modelId, text)),
-    })
+    }),
+    { abortSignal: signal }
   );
+  if (signal?.aborted) throw new Error('Request deadline exceeded');
 
   const parsed = JSON.parse(Buffer.from(response.body).toString('utf8'));
   const embedding = readEmbedding(modelId, parsed);

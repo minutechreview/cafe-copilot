@@ -1,9 +1,24 @@
 const money = value => Number(Number(value || 0).toFixed(2));
 
+export function localeOffset(locale) {
+  const normalized = String(locale || '').trim().toUpperCase();
+  let configured = {};
+  if (process.env.COPILOT_LOCALE_OFFSETS) {
+    try { configured = JSON.parse(process.env.COPILOT_LOCALE_OFFSETS); }
+    catch { throw new Error('COPILOT_LOCALE_OFFSETS must be valid JSON'); }
+  }
+  const configuredOffset = configured[normalized] || configured[String(locale || '').trim()];
+  if (configuredOffset !== undefined) {
+    if (!/^[+-](?:0\d|1\d|2[0-3]):[0-5]\d$/.test(configuredOffset)) throw new Error(`Invalid configured offset for locale ${locale}`);
+    return configuredOffset;
+  }
+  if (normalized.endsWith('-LK')) return '+05:30';
+  if (normalized.endsWith('-KW')) return '+03:00';
+  return 'Z';
+}
+
 function dayRange(date, locale) {
-  // POS has no timezone column yet. Its configured Sri Lankan locale is the only
-  // durable business-local signal available; match the Colombo day used by demo/POS.
-  const offset = String(locale || '').toUpperCase().endsWith('-LK') ? '+05:30' : 'Z';
+  const offset = localeOffset(locale);
   const start = new Date(`${date}T00:00:00${offset}`);
   if (Number.isNaN(start.valueOf())) throw new Error('date must be YYYY-MM-DD');
   const end = new Date(start.valueOf() + 86_400_000);
@@ -21,24 +36,31 @@ function narrative({ currency, gross, count, variance, refunds }) {
   return `${count} completed orders generated ${currency} ${money(gross).toFixed(2)} in gross sales.${unusual}`;
 }
 
-async function rows(query, label) {
-  const { data, error } = await query;
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw new Error('Request deadline exceeded');
+}
+
+async function rows(query, label, signal) {
+  throwIfAborted(signal);
+  const request = signal && typeof query?.abortSignal === 'function' ? query.abortSignal(signal) : query;
+  const { data, error } = await request;
+  throwIfAborted(signal);
   if (error) throw new Error(`${label}: ${error.message}`);
   return data || [];
 }
 
-export async function generateDailySummary({ supabase, businessId, date }) {
+export async function generateDailySummary({ supabase, businessId, date, signal }) {
   if (!supabase || !businessId || !/^\d{4}-\d{2}-\d{2}$/.test(date || '')) throw new Error('supabase, businessId, and date (YYYY-MM-DD) are required');
-  const business = (await rows(supabase.from('businesses').select('id,currency,locale_default').eq('id', businessId).limit(1), 'business'))[0];
+  const business = (await rows(supabase.from('businesses').select('id,currency,locale_default').eq('id', businessId).limit(1), 'business', signal))[0];
   if (!business) throw new Error(`Business not found: ${businessId}`);
   const [start, end] = dayRange(date, business.locale_default);
   const scoped = (table, column, select) => supabase.from(table).select(select).eq('business_id', businessId).gte(column, start).lt(column, end);
   const [orders, sessions, adjustments, events, noSales] = await Promise.all([
-    rows(scoped('orders', 'created_at', 'id,status,payment_method,order_type,total,order_items(qty,unit_price,menu_items(name))'), 'orders'),
-    rows(scoped('till_sessions', 'closed_at', 'id,opening_float,expected_cash,closing_count,variance,banked_amount'), 'till sessions'),
-    rows(scoped('order_adjustments', 'created_at', 'id,type,amount'), 'adjustments'),
-    rows(scoped('paid_in_out_events', 'timestamp', 'id,direction,amount,reversed_at'), 'paid in/out'),
-    rows(scoped('no_sale_events', 'timestamp', 'id'), 'no sales'),
+    rows(scoped('orders', 'created_at', 'id,status,payment_method,order_type,total,order_items(qty,unit_price,menu_items(name))'), 'orders', signal),
+    rows(scoped('till_sessions', 'closed_at', 'id,opening_float,expected_cash,closing_count,variance,banked_amount'), 'till sessions', signal),
+    rows(scoped('order_adjustments', 'created_at', 'id,type,amount'), 'adjustments', signal),
+    rows(scoped('paid_in_out_events', 'timestamp', 'id,direction,amount,reversed_at'), 'paid in/out', signal),
+    rows(scoped('no_sale_events', 'timestamp', 'id'), 'no sales', signal),
   ]);
   if (![orders, sessions, adjustments, events, noSales].some(x => x.length)) return null;
   const completed = orders.filter(o => o.status === 'completed');

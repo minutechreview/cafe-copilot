@@ -14,6 +14,8 @@ let pool;
 const DEFAULT_POOL_MAX = 4;
 const DEFAULT_CONNECTION_TIMEOUT_MS = 5_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 10_000;
+const DEFAULT_QUERY_TIMEOUT_MS = 10_000;
+const DEFAULT_STATEMENT_TIMEOUT_MS = 10_000;
 
 function configuredPositiveInteger(name, fallback, maximum) {
   const raw = process.env[name];
@@ -35,6 +37,8 @@ export function getPoolOptions(connectionString = process.env.CRDB_CONNECTION_ST
     max: configuredPositiveInteger('CRDB_POOL_MAX', DEFAULT_POOL_MAX, 10),
     connectionTimeoutMillis: configuredPositiveInteger('CRDB_CONNECTION_TIMEOUT_MS', DEFAULT_CONNECTION_TIMEOUT_MS, 10_000),
     idleTimeoutMillis: configuredPositiveInteger('CRDB_IDLE_TIMEOUT_MS', DEFAULT_IDLE_TIMEOUT_MS, 60_000),
+    query_timeout: configuredPositiveInteger('CRDB_QUERY_TIMEOUT_MS', DEFAULT_QUERY_TIMEOUT_MS, 30_000),
+    statement_timeout: configuredPositiveInteger('CRDB_STATEMENT_TIMEOUT_MS', DEFAULT_STATEMENT_TIMEOUT_MS, 30_000),
   };
 }
 
@@ -44,6 +48,14 @@ function getPool() {
     pool = new Pool(getPoolOptions());
   }
   return pool;
+}
+
+export function throwIfAborted(signal) {
+  if (signal?.aborted) {
+    const error = new Error('Request deadline exceeded');
+    error.name = 'AbortError';
+    throw error;
+  }
 }
 
 /** Formats a JS number array as the literal CockroachDB VECTOR syntax expects, e.g. '[0.1,0.2]'. */
@@ -92,10 +104,11 @@ export function normalizePrincipal(principal) {
  * @param {{ title?: string }} [input]
  * @returns {Promise<string>} conversation id
  */
-export async function createConversation(principal, input = {}) {
+export async function createConversation(principal, input = {}, { signal } = {}) {
   const p = normalizePrincipal(principal);
   const title = typeof input?.title === 'string' && input.title.trim() ? input.title.trim() : null;
 
+  throwIfAborted(signal);
   const { rows } = await getPool().query(
     `INSERT INTO conversations (business_id, actor_id, access_mode, title)
      VALUES ($1, $2, $3, $4)
@@ -105,6 +118,25 @@ export async function createConversation(principal, input = {}) {
   return rows[0].id;
 }
 
+/** Returns whether a conversation belongs to the exact business, actor, and access mode. */
+export async function conversationExists(principal, conversationId, { signal } = {}) {
+  const p = normalizePrincipal(principal);
+  if (!conversationId || typeof conversationId !== 'string' || !conversationId.trim()) return false;
+  throwIfAborted(signal);
+  const { rows } = await getPool().query(
+    `SELECT EXISTS (
+       SELECT 1 FROM conversations
+        WHERE id = $1
+          AND business_id = $2
+          AND actor_id = $3
+          AND access_mode = $4
+     ) AS owned`,
+    [conversationId.trim(), p.businessId, p.actorId, p.accessMode]
+  );
+  throwIfAborted(signal);
+  return rows[0]?.owned === true;
+}
+
 /**
  * Appends a message to a conversation owned by the requesting principal and bumps updated_at.
  * Uses atomic INSERT ... SELECT predicate to prevent TOCTOU race conditions and cross-principal access.
@@ -112,7 +144,7 @@ export async function createConversation(principal, input = {}) {
  * @param {{ conversationId: string, role: 'user'|'assistant', content: string }} input
  * @returns {Promise<string>} message id
  */
-export async function appendMessage(principal, input = {}) {
+export async function appendMessage(principal, input = {}, { signal } = {}) {
   const p = normalizePrincipal(principal);
   const conversationId = input?.conversationId;
   const role = input?.role;
@@ -128,10 +160,13 @@ export async function appendMessage(principal, input = {}) {
     throw new Error('content is required');
   }
 
+  throwIfAborted(signal);
   const client = await getPool().connect();
   try {
+    throwIfAborted(signal);
     await client.query('BEGIN');
 
+    throwIfAborted(signal);
     const { rows } = await client.query(
       `INSERT INTO messages (conversation_id, role, content)
        SELECT c.id, $2, $3
@@ -150,6 +185,7 @@ export async function appendMessage(principal, input = {}) {
 
     const messageId = rows[0].id;
 
+    throwIfAborted(signal);
     await client.query(
       `UPDATE conversations
           SET updated_at = now()
@@ -160,6 +196,7 @@ export async function appendMessage(principal, input = {}) {
       [conversationId.trim(), p.businessId, p.actorId, p.accessMode]
     );
 
+    throwIfAborted(signal);
     await client.query('COMMIT');
     return messageId;
   } catch (err) {
@@ -177,7 +214,7 @@ export async function appendMessage(principal, input = {}) {
  * @param {number} [limit=12]
  * @returns {Promise<{role: string, content: string, createdAt: Date}[]>}
  */
-export async function getRecentMessages(principal, conversationId, limit = 12) {
+export async function getRecentMessages(principal, conversationId, limit = 12, { signal } = {}) {
   const p = normalizePrincipal(principal);
   if (!conversationId || typeof conversationId !== 'string' || !conversationId.trim()) {
     throw new Error('conversationId is required');
@@ -185,6 +222,7 @@ export async function getRecentMessages(principal, conversationId, limit = 12) {
 
   const numericLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 12;
 
+  throwIfAborted(signal);
   const { rows } = await getPool().query(
     `SELECT m.role, m.content, m.created_at
        FROM messages m
@@ -197,6 +235,7 @@ export async function getRecentMessages(principal, conversationId, limit = 12) {
       LIMIT $5`,
     [conversationId.trim(), p.businessId, p.actorId, p.accessMode, numericLimit]
   );
+  throwIfAborted(signal);
 
   return rows
     .map((row) => ({ role: row.role, content: row.content, createdAt: row.created_at }))
@@ -209,7 +248,7 @@ export async function getRecentMessages(principal, conversationId, limit = 12) {
  * @param {{ businessId: string, actorId: string, accessMode: string }} principal
  * @param {{ content: string, source?: string }} input
  */
-export async function saveNote(principal, input = {}) {
+export async function saveNote(principal, input = {}, { signal } = {}) {
   const p = normalizePrincipal(principal);
   const content = input?.content;
   const source = typeof input?.source === 'string' && input.source.trim() ? input.source.trim() : null;
@@ -218,6 +257,7 @@ export async function saveNote(principal, input = {}) {
     throw new Error('content is required');
   }
 
+  throwIfAborted(signal);
   const { rows } = await getPool().query(
     `INSERT INTO notes (business_id, created_by, content, source)
      VALUES ($1, $2, $3, $4)
@@ -231,16 +271,30 @@ export async function saveNote(principal, input = {}) {
  * Lists business-context notes for a business.
  * @param {{ businessId: string, actorId: string, accessMode: string }} principal
  */
-export async function listNotes(principal) {
+export async function listNotes(principal, { signal } = {}) {
   const p = normalizePrincipal(principal);
 
-  const { rows } = await getPool().query(
-    `SELECT id, content, source, created_by, created_at
-       FROM notes
-      WHERE business_id = $1
-      ORDER BY created_at DESC`,
-    [p.businessId]
-  );
+  let sql;
+  let values;
+  if (p.accessMode === 'authenticated') {
+    sql = `SELECT id, content, source, created_by, created_at
+             FROM notes
+            WHERE business_id = $1
+              AND created_by NOT LIKE 'demo-session-%'
+              AND created_by <> 'legacy_demo'
+            ORDER BY created_at DESC`;
+    values = [p.businessId];
+  } else {
+    sql = `SELECT id, content, source, created_by, created_at
+             FROM notes
+            WHERE business_id = $1
+              AND created_by = $2
+            ORDER BY created_at DESC`;
+    values = [p.businessId, p.actorId];
+  }
+  throwIfAborted(signal);
+  const { rows } = await getPool().query(sql, values);
+  throwIfAborted(signal);
   return rows;
 }
 
@@ -250,7 +304,7 @@ export async function listNotes(principal) {
  * @param {{ businessId: string, actorId: string, accessMode: string }} principal
  * @param {{ conversationId?: string, kind: string, payload: object }} input
  */
-export async function saveDraft(principal, input = {}) {
+export async function saveDraft(principal, input = {}, { signal } = {}) {
   const p = normalizePrincipal(principal);
   const conversationId = typeof input?.conversationId === 'string' && input.conversationId.trim() ? input.conversationId.trim() : null;
   const kind = input?.kind;
@@ -264,6 +318,7 @@ export async function saveDraft(principal, input = {}) {
   }
 
   if (conversationId) {
+    throwIfAborted(signal);
     const { rows } = await getPool().query(
       `INSERT INTO drafts (business_id, actor_id, access_mode, conversation_id, kind, payload)
        SELECT $1, $2, $3, c.id, $4, $5
@@ -282,6 +337,7 @@ export async function saveDraft(principal, input = {}) {
     return rows[0].id;
   }
 
+  throwIfAborted(signal);
   const { rows } = await getPool().query(
     `INSERT INTO drafts (business_id, actor_id, access_mode, conversation_id, kind, payload)
      VALUES ($1, $2, $3, NULL, $4, $5)
@@ -298,7 +354,7 @@ export async function saveDraft(principal, input = {}) {
  * @param {{ businessId: string, actorId: string, accessMode: string }} principal
  * @param {{ id?: string, docType: string, docDate?: string|null, content: string, metadata?: object, embedding: number[] }} input
  */
-export async function upsertDocument(principal, input = {}) {
+export async function upsertDocument(principal, input = {}, { signal } = {}) {
   const p = normalizePrincipal(principal);
 
   const explicitId = typeof input?.id === 'string' && input.id.trim() ? input.id.trim() : null;
@@ -317,6 +373,7 @@ export async function upsertDocument(principal, input = {}) {
   const vectorLiteral = toVectorLiteral(embedding);
 
   if (explicitId) {
+    throwIfAborted(signal);
     const { rows } = await getPool().query(
       `UPDATE documents
           SET doc_type = $3,
@@ -337,6 +394,7 @@ export async function upsertDocument(principal, input = {}) {
   }
 
   if (docDate) {
+    throwIfAborted(signal);
     const { rows } = await getPool().query(
       `INSERT INTO documents (business_id, created_by, doc_type, doc_date, content, metadata, embedding)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -350,6 +408,7 @@ export async function upsertDocument(principal, input = {}) {
     return rows[0].id;
   }
 
+  throwIfAborted(signal);
   const { rows } = await getPool().query(
     `INSERT INTO documents (business_id, created_by, doc_type, doc_date, content, metadata, embedding)
      VALUES ($1, $2, $3, NULL, $4, $5, $6)
@@ -365,11 +424,12 @@ export async function upsertDocument(principal, input = {}) {
  * @param {number[]} queryEmbedding
  * @param {number} [k=5]
  */
-export async function searchDocuments(principal, queryEmbedding, k = 5) {
+export async function searchDocuments(principal, queryEmbedding, k = 5, { signal } = {}) {
   const p = normalizePrincipal(principal);
   const vectorLiteral = toVectorLiteral(queryEmbedding);
   const numericK = Number.isFinite(k) && k > 0 ? Math.floor(k) : 5;
 
+  throwIfAborted(signal);
   const { rows } = await getPool().query(
     `SELECT id, doc_type, doc_date, content, metadata, embedding <=> $2 AS distance
        FROM documents
@@ -378,6 +438,7 @@ export async function searchDocuments(principal, queryEmbedding, k = 5) {
       LIMIT $3`,
     [p.businessId, vectorLiteral, numericK]
   );
+  throwIfAborted(signal);
 
   return rows.map((row) => ({
     id: row.id,

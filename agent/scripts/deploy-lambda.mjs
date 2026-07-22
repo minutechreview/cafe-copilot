@@ -37,6 +37,8 @@ import {
   AddPermissionCommand,
 } from '@aws-sdk/client-lambda';
 import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
+import { assertStagingUrl } from '../pos-client.mjs';
+import { applyGuardedFunctionUpdate } from '../deployment-order.mjs';
 
 const AGENT_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const REPO_ROOT = path.dirname(AGENT_DIR);
@@ -56,6 +58,8 @@ const LAMBDA_ENV_KEYS = [
   'CRDB_POOL_MAX',
   'CRDB_CONNECTION_TIMEOUT_MS',
   'CRDB_IDLE_TIMEOUT_MS',
+  'CRDB_QUERY_TIMEOUT_MS',
+  'CRDB_STATEMENT_TIMEOUT_MS',
   'BEDROCK_MODEL_ID',
   'BEDROCK_EMBEDDING_MODEL_ID',
   'EMBEDDING_DIM',
@@ -71,6 +75,8 @@ const LAMBDA_ENV_KEYS = [
   'COPILOT_RATE_LIMIT_MAX_REQUESTS',
   'COPILOT_RATE_LIMIT_WINDOW_MS',
   'COPILOT_MAX_INPUT_CHARS',
+  'COPILOT_MAX_BODY_BYTES',
+  'COPILOT_LOCALE_OFFSETS',
   'BEDROCK_MAX_TOKENS',
 ];
 
@@ -124,6 +130,14 @@ function assertDeploySafetyConfiguration() {
   requiredPositiveInteger('COPILOT_RATE_LIMIT_MAX_REQUESTS', 1_000);
   requiredPositiveInteger('COPILOT_RATE_LIMIT_WINDOW_MS', 3_600_000);
   requiredPositiveInteger('COPILOT_REQUEST_TIMEOUT_MS', 54_000);
+  requiredPositiveInteger('COPILOT_MAX_BODY_BYTES', 100_000);
+  if (process.env.CRDB_POOL_MAX) requiredPositiveInteger('CRDB_POOL_MAX', 10);
+  if (process.env.CRDB_CONNECTION_TIMEOUT_MS) requiredPositiveInteger('CRDB_CONNECTION_TIMEOUT_MS', 10_000);
+  if (process.env.CRDB_IDLE_TIMEOUT_MS) requiredPositiveInteger('CRDB_IDLE_TIMEOUT_MS', 60_000);
+  if (process.env.CRDB_QUERY_TIMEOUT_MS) requiredPositiveInteger('CRDB_QUERY_TIMEOUT_MS', 30_000);
+  if (process.env.CRDB_STATEMENT_TIMEOUT_MS) requiredPositiveInteger('CRDB_STATEMENT_TIMEOUT_MS', 30_000);
+  requiredPositiveInteger('COPILOT_RESERVED_CONCURRENCY', 10);
+  assertStagingUrl(process.env.POS_SUPABASE_URL);
   configuredCorsOrigins();
 }
 
@@ -295,23 +309,11 @@ async function updateExistingFunction({ roleArn, zipBuffer, envVars, runtime }) 
   await waitForFunctionReady();
 }
 
-async function ensureFunction({ roleArn, zipBuffer, envVars }) {
-  const existingRuntime = await getExistingRuntime();
-  if (!existingRuntime) {
-    return createFunctionWithFallback({ roleArn, zipBuffer, envVars });
-  }
-  console.log(`[deploy] function ${FUNCTION_NAME} exists (runtime ${existingRuntime}), updating`);
-  await updateExistingFunction({ roleArn, zipBuffer, envVars, runtime: existingRuntime });
-  return existingRuntime;
-}
-
-/** Cost guardrail: caps concurrent executions so a runaway loop can't rack up an open-ended
- * Bedrock/Lambda bill. */
-async function ensureConcurrency() {
+async function setConcurrency(value) {
   await lambdaClient.send(
-    new PutFunctionConcurrencyCommand({ FunctionName: FUNCTION_NAME, ReservedConcurrentExecutions: 5 })
+    new PutFunctionConcurrencyCommand({ FunctionName: FUNCTION_NAME, ReservedConcurrentExecutions: value })
   );
-  console.log('[deploy] reserved concurrency set to 5');
+  console.log(`[deploy] reserved concurrency set to ${value}`);
 }
 
 async function ensureFunctionUrl(corsOrigins) {
@@ -405,8 +407,21 @@ async function main() {
   }
 
   const envVars = buildLambdaEnv();
-  const runtime = await ensureFunction({ roleArn, zipBuffer, envVars });
-  await ensureConcurrency();
+  const existingRuntime = await getExistingRuntime();
+  let runtime = existingRuntime;
+  const targetConcurrency = Number(process.env.COPILOT_RESERVED_CONCURRENCY);
+  await applyGuardedFunctionUpdate({
+    existingRuntime,
+    targetConcurrency,
+    setConcurrency,
+    updateExisting: async (currentRuntime) => {
+      console.log(`[deploy] function ${FUNCTION_NAME} exists (runtime ${currentRuntime}), guarding then updating`);
+      await updateExistingFunction({ roleArn, zipBuffer, envVars, runtime: currentRuntime });
+    },
+    createNew: async () => {
+      runtime = await createFunctionWithFallback({ roleArn, zipBuffer, envVars });
+    },
+  });
 
   const corsOrigins = configuredCorsOrigins();
   const functionUrl = await ensureFunctionUrl(corsOrigins);

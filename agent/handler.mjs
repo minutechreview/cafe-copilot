@@ -3,7 +3,7 @@
 // code works locally today (dev-server.mjs relays events as Server-Sent Events) and later
 // behind AWS Lambda response streaming (C6) without changes to this file.
 import { BedrockRuntimeClient, ConverseStreamCommand } from '@aws-sdk/client-bedrock-runtime';
-import { createConversation, appendMessage, getRecentMessages } from '../memory/store.mjs';
+import { createConversation, appendMessage, conversationExists, getRecentMessages } from '../memory/store.mjs';
 import { toolConfig, executeTool } from './tools.mjs';
 import { resolveAuthContext } from './auth-context.mjs';
 import { getAuthenticatedPosClient, getDemoPosClient } from './pos-client.mjs';
@@ -26,11 +26,12 @@ class ValidationError extends Error {
   }
 }
 
-function buildSystemPrompt(todayIso) {
+function buildSystemPrompt() {
   return [
     'You are Cafe Copilot, a warm, plain-language assistant for a small independent cafe owner.',
-    `Today's date is ${todayIso}. Use it to resolve relative dates such as "yesterday", ` +
-      '"today", or "this week" before calling a tool. Use tool results to establish available data and currency.',
+    'Do not infer a business-local date from server UTC. If a user asks about "today", "yesterday", ' +
+      'or another relative period without a trusted business-local date, ask for the calendar date. ' +
+      'Use tool results to establish available data and currency.',
     'Hard rules, no exceptions:',
     '1. Every number you say — sales, counts, amounts, variances — must come from a tool ' +
       'result you received in this conversation. Never estimate, round imaginatively, or ' +
@@ -88,7 +89,7 @@ export function getDemoSessionIdFromCookie(cookieHeader) {
  * deliberately separate from `handler`: transports must call it before they open SSE.
  */
 export async function resolveTrustedChatInput(
-  { headers = {}, payload = {}, demoSessionId } = {},
+  { headers = {}, payload = {}, demoSessionId, signal } = {},
   {
     resolveAuth = resolveAuthContext,
     createAuthenticatedPosClient = getAuthenticatedPosClient,
@@ -120,7 +121,10 @@ export async function resolveTrustedChatInput(
   const resolved = await resolveAuth({
     headers,
     body: { ...payload, mode: requestedMode },
-  });
+    signal,
+  }, { signal });
+
+  if (signal?.aborted) throw new Error('Request deadline exceeded');
 
   if (resolved?.mode === 'authenticated') {
     if (!resolved.userId || !resolved.businessId || !resolved.accessToken) {
@@ -134,7 +138,9 @@ export async function resolveTrustedChatInput(
         actorId: resolved.userId,
         accessMode: 'authenticated',
       },
-      posClient: createAuthenticatedPosClient(resolved.accessToken),
+      posClient: signal
+        ? createAuthenticatedPosClient(resolved.accessToken, { signal })
+        : createAuthenticatedPosClient(resolved.accessToken),
     };
   }
 
@@ -151,7 +157,7 @@ export async function resolveTrustedChatInput(
         actorId: sessionId,
         accessMode: 'demo',
       },
-      posClient: await createDemoPosClient(),
+      posClient: await createDemoPosClient({ signal }),
       demoSessionId: sessionId,
     };
   }
@@ -178,9 +184,12 @@ async function resolveToolUses(content, ctx) {
   for (const block of toolUseBlocks) {
     const { toolUseId, name, input } = block.toolUse;
     try {
+      if (ctx.signal?.aborted) throw new Error('Request deadline exceeded');
       const output = await executeTool(name, input, ctx);
+      if (ctx.signal?.aborted) throw new Error('Request deadline exceeded');
       results.push({ toolResult: { toolUseId, content: [{ json: output }], status: 'success' } });
     } catch (err) {
+      if (ctx.signal?.aborted || err?.name === 'AbortError') throw err;
       console.error('[agent] tool call failed', {
         tool: name,
         error: err?.message ?? String(err),
@@ -345,9 +354,22 @@ export async function handler({
   let history = [];
   try {
     if (!activeConversationId) {
-      activeConversationId = await createConversation(activePrincipal, { title: 'chat conversation' });
+      activeConversationId = signal
+        ? await createConversation(activePrincipal, { title: 'chat conversation' }, { signal })
+        : await createConversation(activePrincipal, { title: 'chat conversation' });
     } else {
-      history = await getRecentMessages(activePrincipal, activeConversationId, HISTORY_LIMIT);
+      const owned = signal
+        ? await conversationExists(activePrincipal, activeConversationId, { signal })
+        : await conversationExists(activePrincipal, activeConversationId);
+      if (owned) {
+        history = signal
+          ? await getRecentMessages(activePrincipal, activeConversationId, HISTORY_LIMIT, { signal })
+          : await getRecentMessages(activePrincipal, activeConversationId, HISTORY_LIMIT);
+      } else {
+        activeConversationId = signal
+          ? await createConversation(activePrincipal, { title: 'chat conversation' }, { signal })
+          : await createConversation(activePrincipal, { title: 'chat conversation' });
+      }
     }
   } catch (err) {
     console.error('[agent] memory lookup failed', {
@@ -358,8 +380,7 @@ export async function handler({
     return;
   }
 
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const systemPrompt = buildSystemPrompt(todayIso);
+  const systemPrompt = buildSystemPrompt();
   const maxTokens = configuredPositiveInteger('BEDROCK_MAX_TOKENS', DEFAULT_MAX_TOKENS, 2_000);
   const initialMessages = [...toConverseMessages(history), { role: 'user', content: [{ text: message }] }];
   const ctx = {
@@ -367,6 +388,7 @@ export async function handler({
     conversationId: activeConversationId,
     principal: activePrincipal,
     posClient,
+    signal,
   };
 
   let loopResult;
@@ -391,8 +413,14 @@ export async function handler({
   }
 
   try {
-    await appendMessage(activePrincipal, { conversationId: activeConversationId, role: 'user', content: message });
-    await appendMessage(activePrincipal, { conversationId: activeConversationId, role: 'assistant', content: reply });
+    if (signal?.aborted) throw new Error('Request deadline exceeded');
+    const userMessage = { conversationId: activeConversationId, role: 'user', content: message };
+    if (signal) await appendMessage(activePrincipal, userMessage, { signal });
+    else await appendMessage(activePrincipal, userMessage);
+    if (signal?.aborted) throw new Error('Request deadline exceeded');
+    const assistantMessage = { conversationId: activeConversationId, role: 'assistant', content: reply };
+    if (signal) await appendMessage(activePrincipal, assistantMessage, { signal });
+    else await appendMessage(activePrincipal, assistantMessage);
   } catch (err) {
     console.error('[agent] failed to persist conversation turn', {
       conversationId: activeConversationId,

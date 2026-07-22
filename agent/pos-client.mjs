@@ -5,6 +5,10 @@ const STAGING_HOSTNAME = `${STAGING_PROJECT_REF}.supabase.co`;
 
 let demoClientPromise;
 
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw new Error('Request deadline exceeded');
+}
+
 /**
  * Validates that the Supabase URL points strictly to the allowed POS staging project.
  * Enforces HTTPS, exact hostname, no user credentials, and default port (443).
@@ -90,14 +94,17 @@ async function authenticateDemo() {
  * Reused across warm invocations.
  * @returns {Promise<import('@supabase/supabase-js').SupabaseClient>}
  */
-export function getDemoPosClient() {
+export async function getDemoPosClient({ signal } = {}) {
+  throwIfAborted(signal);
   if (!demoClientPromise) {
     demoClientPromise = authenticateDemo().catch((err) => {
       demoClientPromise = undefined;
       throw err;
     });
   }
-  return demoClientPromise;
+  const client = await demoClientPromise;
+  throwIfAborted(signal);
+  return client;
 }
 
 /**
@@ -106,7 +113,8 @@ export function getDemoPosClient() {
  * @param {string} accessToken - Verified caller Supabase JWT token
  * @returns {import('@supabase/supabase-js').SupabaseClient}
  */
-export function getAuthenticatedPosClient(accessToken) {
+export function getAuthenticatedPosClient(accessToken, { signal } = {}) {
+  throwIfAborted(signal);
   if (!accessToken || typeof accessToken !== 'string' || !accessToken.trim()) {
     throw new Error('accessToken is required for authenticated POS client');
   }
