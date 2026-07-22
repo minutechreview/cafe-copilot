@@ -105,10 +105,11 @@ export async function resolveTrustedChatInput(
     throw new ValidationError('message is too long');
   }
 
-  const hasAuthorization = Object.keys(headers).some((key) => key.toLowerCase() === 'authorization');
-  const hasBusinessId = Object.prototype.hasOwnProperty.call(payload, 'businessId');
-  const isLegacyAnonymousDemo = payload.mode === undefined && !hasAuthorization && !hasBusinessId;
-  const requestedMode = isLegacyAnonymousDemo ? 'demo' : payload.mode;
+  const requestedMode = typeof payload.mode === 'string' ? payload.mode.trim().toLowerCase() : payload.mode;
+
+  if (!['authenticated', 'demo'].includes(requestedMode)) {
+    throw new ValidationError('mode is required and must be "authenticated" or "demo"');
+  }
 
   if (requestedMode === 'demo' && process.env.DEMO_MODE_ENABLED !== 'true') {
     const error = new Error('Demo access is not available.');

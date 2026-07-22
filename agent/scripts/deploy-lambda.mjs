@@ -53,6 +53,9 @@ const RUNTIME_CANDIDATES = ['nodejs22.x', 'nodejs20.x'];
 // must rely on the execution role via the default credential chain).
 const LAMBDA_ENV_KEYS = [
   'CRDB_CONNECTION_STRING',
+  'CRDB_POOL_MAX',
+  'CRDB_CONNECTION_TIMEOUT_MS',
+  'CRDB_IDLE_TIMEOUT_MS',
   'BEDROCK_MODEL_ID',
   'BEDROCK_EMBEDDING_MODEL_ID',
   'EMBEDDING_DIM',

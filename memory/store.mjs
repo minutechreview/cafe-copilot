@@ -11,14 +11,37 @@ const { Pool } = pg;
 
 let pool;
 
+const DEFAULT_POOL_MAX = 4;
+const DEFAULT_CONNECTION_TIMEOUT_MS = 5_000;
+const DEFAULT_IDLE_TIMEOUT_MS = 10_000;
+
+function configuredPositiveInteger(name, fallback, maximum) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0 || value > maximum) {
+    throw new Error(`${name} must be a positive integer no greater than ${maximum}`);
+  }
+  return value;
+}
+
+/** Bounded, Lambda-safe pool configuration. Values are server-only environment settings. */
+export function getPoolOptions(connectionString = process.env.CRDB_CONNECTION_STRING) {
+  if (!connectionString || typeof connectionString !== 'string' || !connectionString.trim()) {
+    throw new Error('CRDB_CONNECTION_STRING is not configured');
+  }
+  return {
+    connectionString,
+    max: configuredPositiveInteger('CRDB_POOL_MAX', DEFAULT_POOL_MAX, 10),
+    connectionTimeoutMillis: configuredPositiveInteger('CRDB_CONNECTION_TIMEOUT_MS', DEFAULT_CONNECTION_TIMEOUT_MS, 10_000),
+    idleTimeoutMillis: configuredPositiveInteger('CRDB_IDLE_TIMEOUT_MS', DEFAULT_IDLE_TIMEOUT_MS, 60_000),
+  };
+}
+
 /** Lazily creates the shared pool so importing this module never requires env vars to be set. */
 function getPool() {
   if (!pool) {
-    const connectionString = process.env.CRDB_CONNECTION_STRING;
-    if (!connectionString) {
-      throw new Error('CRDB_CONNECTION_STRING is not configured');
-    }
-    pool = new Pool({ connectionString });
+    pool = new Pool(getPoolOptions());
   }
   return pool;
 }

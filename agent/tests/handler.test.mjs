@@ -609,22 +609,16 @@ describe('resolveTrustedChatInput transport boundary', () => {
     expect(createDemoPosClient).not.toHaveBeenCalled();
   });
 
-  it('keeps legacy anonymous standalone requests behind explicit demo enablement', async () => {
+  it('requires an explicit mode and never infers demo from missing auth or business fields', async () => {
     const resolveAuth = vi.fn().mockResolvedValue({
       mode: 'demo',
       demoSessionId: 'demo-session-33333333-3333-4333-8333-333333333333',
     });
     const { resolveTrustedChatInput } = await import('../handler.mjs');
 
-    await resolveTrustedChatInput(
-      { headers: {}, payload: { message: 'hello' } },
-      { resolveAuth, createDemoPosClient: vi.fn().mockResolvedValue({}) }
-    );
-    expect(resolveAuth).toHaveBeenCalledWith({ headers: {}, body: { message: 'hello', mode: 'demo' } });
-
-    process.env.DEMO_MODE_ENABLED = 'false';
     await expect(
       resolveTrustedChatInput({ headers: {}, payload: { message: 'hello' } }, { resolveAuth })
-    ).rejects.toMatchObject({ statusCode: 403, message: 'Demo access is not available.' });
+    ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/mode/i) });
+    expect(resolveAuth).not.toHaveBeenCalled();
   });
 });

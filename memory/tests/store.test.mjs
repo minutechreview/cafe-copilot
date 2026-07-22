@@ -46,7 +46,36 @@ describe('memory/store.mjs & migrations', () => {
     await createConversation(PRINCIPAL_AUTH, { title: 't2' });
 
     expect(PoolMock).toHaveBeenCalledTimes(1);
-    expect(PoolMock).toHaveBeenCalledWith({ connectionString: process.env.CRDB_CONNECTION_STRING });
+    expect(PoolMock).toHaveBeenCalledWith({
+      connectionString: process.env.CRDB_CONNECTION_STRING,
+      max: 4,
+      connectionTimeoutMillis: 5000,
+      idleTimeoutMillis: 10000,
+    });
+  });
+
+  it('uses validated bounded pool settings from server environment variables', async () => {
+    process.env.CRDB_POOL_MAX = '3';
+    process.env.CRDB_CONNECTION_TIMEOUT_MS = '2500';
+    process.env.CRDB_IDLE_TIMEOUT_MS = '15000';
+    const { getPoolOptions } = await import('../store.mjs');
+
+    expect(getPoolOptions()).toEqual({
+      connectionString: process.env.CRDB_CONNECTION_STRING,
+      max: 3,
+      connectionTimeoutMillis: 2500,
+      idleTimeoutMillis: 15000,
+    });
+  });
+
+  it('fails closed for invalid bounded pool configuration before creating a pool', async () => {
+    process.env.CRDB_POOL_MAX = '11';
+    const { createConversation } = await import('../store.mjs');
+
+    await expect(createConversation(PRINCIPAL_AUTH, { title: 't' })).rejects.toThrow(
+      'CRDB_POOL_MAX must be a positive integer no greater than 10'
+    );
+    expect(PoolMock).not.toHaveBeenCalled();
   });
 
   describe('splitSqlStatements utility', () => {
