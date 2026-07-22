@@ -33,19 +33,16 @@ function toVectorLiteral(embedding) {
 
 /**
  * Validates and normalizes a principal context object.
- * Requires explicit non-blank businessId, actorId, and accessMode.
- * @param {Object} input - { businessId, actorId, accessMode } or object wrapping principal
+ * Accepts ONLY the direct explicit principal shape { businessId, actorId, accessMode }.
+ * @param {{ businessId: string, actorId: string, accessMode: 'authenticated'|'demo'|'legacy_demo' }} principal
  * @returns {{ businessId: string, actorId: string, accessMode: 'authenticated'|'demo'|'legacy_demo' }}
  */
-export function normalizePrincipal(input) {
-  if (!input || typeof input !== 'object') {
+export function normalizePrincipal(principal) {
+  if (!principal || typeof principal !== 'object') {
     throw new Error('principal object is required');
   }
-  const p = input.principal || input;
 
-  const businessId = p.businessId;
-  const actorId = p.actorId;
-  const accessMode = p.accessMode;
+  const { businessId, actorId, accessMode } = principal;
 
   if (!businessId || typeof businessId !== 'string' || !businessId.trim()) {
     throw new Error('principal.businessId is required');
@@ -68,7 +65,7 @@ export function normalizePrincipal(input) {
 
 /**
  * Creates a new conversation for a principal and returns its id.
- * @param {Object} principal
+ * @param {{ businessId: string, actorId: string, accessMode: string }} principal
  * @param {{ title?: string }} [input]
  * @returns {Promise<string>} conversation id
  */
@@ -88,7 +85,7 @@ export async function createConversation(principal, input = {}) {
 /**
  * Appends a message to a conversation owned by the requesting principal and bumps updated_at.
  * Uses atomic INSERT ... SELECT predicate to prevent TOCTOU race conditions and cross-principal access.
- * @param {Object} principal
+ * @param {{ businessId: string, actorId: string, accessMode: string }} principal
  * @param {{ conversationId: string, role: 'user'|'assistant', content: string }} input
  * @returns {Promise<string>} message id
  */
@@ -152,7 +149,7 @@ export async function appendMessage(principal, input = {}) {
 
 /**
  * Returns the most recent messages in a conversation owned by the requesting principal.
- * @param {Object} principal
+ * @param {{ businessId: string, actorId: string, accessMode: string }} principal
  * @param {string} conversationId
  * @param {number} [limit=12]
  * @returns {Promise<{role: string, content: string, createdAt: Date}[]>}
@@ -185,7 +182,8 @@ export async function getRecentMessages(principal, conversationId, limit = 12) {
 
 /**
  * Saves a durable business-context note carrying created_by.
- * @param {Object} principal
+ * Notes remain business-shared.
+ * @param {{ businessId: string, actorId: string, accessMode: string }} principal
  * @param {{ content: string, source?: string }} input
  */
 export async function saveNote(principal, input = {}) {
@@ -198,17 +196,17 @@ export async function saveNote(principal, input = {}) {
   }
 
   const { rows } = await getPool().query(
-    `INSERT INTO notes (business_id, created_by, actor_id, access_mode, content, source)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO notes (business_id, created_by, content, source)
+     VALUES ($1, $2, $3, $4)
      RETURNING id`,
-    [p.businessId, p.actorId, p.actorId, p.accessMode, content, source]
+    [p.businessId, p.actorId, content, source]
   );
   return rows[0].id;
 }
 
 /**
  * Lists business-context notes for a business.
- * @param {Object} principal
+ * @param {{ businessId: string, actorId: string, accessMode: string }} principal
  */
 export async function listNotes(principal) {
   const p = normalizePrincipal(principal);
@@ -226,7 +224,7 @@ export async function listNotes(principal) {
 /**
  * Saves a draft artifact for a principal.
  * If conversationId is supplied, verifies it belongs to the exact same principal via atomic composite predicate.
- * @param {Object} principal
+ * @param {{ businessId: string, actorId: string, accessMode: string }} principal
  * @param {{ conversationId?: string, kind: string, payload: object }} input
  */
 export async function saveDraft(principal, input = {}) {
@@ -274,7 +272,7 @@ export async function saveDraft(principal, input = {}) {
  * Inserts or updates an embedded document.
  * Explicit ID updates are restricted to the matching business_id and preserve immutable created_by.
  * Dated documents use an atomic ON CONFLICT strategy without SELECT-then-UPSERT races.
- * @param {Object} principal
+ * @param {{ businessId: string, actorId: string, accessMode: string }} principal
  * @param {{ id?: string, docType: string, docDate?: string|null, content: string, metadata?: object, embedding: number[] }} input
  */
 export async function upsertDocument(principal, input = {}) {
@@ -340,7 +338,7 @@ export async function upsertDocument(principal, input = {}) {
 
 /**
  * Vector-searches documents for a business.
- * @param {Object} principal
+ * @param {{ businessId: string, actorId: string, accessMode: string }} principal
  * @param {number[]} queryEmbedding
  * @param {number} [k=5]
  */

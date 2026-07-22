@@ -30,13 +30,11 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS messages_conversation_created_idx
   ON messages (conversation_id, created_at);
 
--- Durable business-context notes (used by C4's save_note tool).
+-- Durable business-context notes (used by C4's save_note tool). Business-shared.
 CREATE TABLE IF NOT EXISTS notes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id TEXT NOT NULL,
   created_by TEXT NOT NULL DEFAULT 'legacy_demo',
-  actor_id TEXT,
-  access_mode TEXT DEFAULT 'legacy_demo',
   content TEXT NOT NULL,
   source TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()

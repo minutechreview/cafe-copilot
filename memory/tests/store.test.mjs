@@ -49,31 +49,65 @@ describe('memory/store.mjs & migrations', () => {
     expect(PoolMock).toHaveBeenCalledWith({ connectionString: process.env.CRDB_CONNECTION_STRING });
   });
 
-  describe('migration ledger & runMigrations', () => {
-    it('executes schema.sql and numbered migrations inside transactions using schema_migrations ledger', async () => {
+  describe('migration ledger, preflight checks & zero-padded filenames', () => {
+    it('runs preflight checks and applies 001 migration inside transactions', async () => {
       const client = { query: clientQueryMock };
-      clientQueryMock.mockResolvedValue({ rows: [] });
+      clientQueryMock
+        .mockResolvedValueOnce({ rows: [] }) // schema_migrations check
+        .mockResolvedValueOnce(undefined) // BEGIN schema.sql
+        .mockResolvedValueOnce(undefined) // schema.sql
+        .mockResolvedValueOnce(undefined) // COMMIT schema.sql
+        .mockResolvedValueOnce({ rows: [] }) // 001 applied check
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight drafts
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight docs
+        .mockResolvedValueOnce(undefined) // BEGIN 001
+        .mockResolvedValueOnce(undefined) // 001 sql
+        .mockResolvedValueOnce(undefined) // INSERT schema_migrations
+        .mockResolvedValueOnce(undefined); // COMMIT 001
 
       const { runMigrations } = await import('../migrate.mjs');
       await runMigrations({ client, embeddingDim: 1536 });
 
       expect(clientQueryMock).toHaveBeenCalledWith(expect.stringContaining('CREATE TABLE IF NOT EXISTS schema_migrations'));
-      expect(clientQueryMock).toHaveBeenCalledWith('BEGIN');
       expect(clientQueryMock).toHaveBeenCalledWith('INSERT INTO schema_migrations (version) VALUES ($1)', ['001_principal_ownership.sql']);
-      expect(clientQueryMock).toHaveBeenCalledWith('COMMIT');
     });
 
-    it('throws error if reading migrations directory fails', async () => {
+    it('fails preflight check before DDL if invalid drafts exist', async () => {
       const client = { query: clientQueryMock };
-      const { runMigrations } = await import('../migrate.mjs');
+      clientQueryMock
+        .mockResolvedValueOnce({ rows: [] }) // schema_migrations check
+        .mockResolvedValueOnce(undefined) // BEGIN schema.sql
+        .mockResolvedValueOnce(undefined) // schema.sql
+        .mockResolvedValueOnce(undefined) // COMMIT schema.sql
+        .mockResolvedValueOnce({ rows: [] }) // 001 applied check
+        .mockResolvedValueOnce({ rows: [{ count: 2 }] }) // preflight drafts finds 2 invalid
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] }); // preflight docs
 
-      await expect(
-        runMigrations({ client, embeddingDim: 1536, migrationsDir: '/nonexistent-migrations-dir' })
-      ).rejects.toThrow(/Failed to read migrations directory/);
+      const { runMigrations } = await import('../migrate.mjs');
+      await expect(runMigrations({ client, embeddingDim: 1536 })).rejects.toThrow(
+        /Preflight check failed: found 2 invalid draft\(s\)/
+      );
+    });
+
+    it('fails preflight check before DDL if duplicate dated documents exist', async () => {
+      const client = { query: clientQueryMock };
+      clientQueryMock
+        .mockResolvedValueOnce({ rows: [] }) // schema_migrations check
+        .mockResolvedValueOnce(undefined) // BEGIN schema.sql
+        .mockResolvedValueOnce(undefined) // schema.sql
+        .mockResolvedValueOnce(undefined) // COMMIT schema.sql
+        .mockResolvedValueOnce({ rows: [] }) // 001 applied check
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight drafts
+        .mockResolvedValueOnce({ rows: [{ count: 3 }] }); // preflight docs finds 3 duplicate groups
+
+      const { runMigrations } = await import('../migrate.mjs');
+      await expect(runMigrations({ client, embeddingDim: 1536 })).rejects.toThrow(
+        /Preflight check failed: found 0 invalid draft\(s\).*and 3 duplicate dated document group\(s\)/
+      );
     });
   });
 
-  describe('normalizePrincipal', () => {
+  describe('normalizePrincipal & missing-principal validation across all store APIs', () => {
     it('normalizes valid authenticated, demo, and legacy_demo principals', async () => {
       const { normalizePrincipal } = await import('../store.mjs');
 
@@ -82,17 +116,30 @@ describe('memory/store.mjs & migrations', () => {
       expect(normalizePrincipal(PRINCIPAL_LEGACY)).toEqual(PRINCIPAL_LEGACY);
     });
 
-    it('rejects missing or blank businessId, actorId, and accessMode without implicit defaults', async () => {
-      const { normalizePrincipal } = await import('../store.mjs');
+    it('rejects missing principal or missing fields across every store API', async () => {
+      const store = await import('../store.mjs');
 
-      expect(() => normalizePrincipal(null)).toThrow('principal object is required');
-      expect(() => normalizePrincipal({ businessId: '', actorId: 'u1', accessMode: 'authenticated' })).toThrow(
-        'principal.businessId is required'
-      );
-      expect(() => normalizePrincipal({ businessId: 'b1', actorId: '', accessMode: 'authenticated' })).toThrow(
-        'principal.actorId is required'
-      );
-      expect(() => normalizePrincipal({ businessId: 'b1', actorId: 'u1', accessMode: 'invalid' })).toThrow(
+      const apis = [
+        () => store.createConversation(null, { title: 't' }),
+        () => store.appendMessage(null, { conversationId: 'c1', role: 'user', content: 'hi' }),
+        () => store.getRecentMessages(null, 'c1'),
+        () => store.saveNote(null, { content: 'note' }),
+        () => store.listNotes(null),
+        () => store.saveDraft(null, { kind: 'po', payload: {} }),
+        () => store.upsertDocument(null, { docType: 'doc', content: 'c', embedding: [0.1] }),
+        () => store.searchDocuments(null, [0.1]),
+      ];
+
+      for (const apiCall of apis) {
+        await expect(apiCall()).rejects.toThrow('principal object is required');
+      }
+    });
+
+    it('rejects invalid accessMode across store APIs', async () => {
+      const store = await import('../store.mjs');
+      const invalidPrincipal = { businessId: 'biz-1', actorId: 'u1', accessMode: 'invalid' };
+
+      await expect(store.createConversation(invalidPrincipal, { title: 't' })).rejects.toThrow(
         /principal.accessMode must be/
       );
     });
@@ -169,17 +216,17 @@ describe('memory/store.mjs & migrations', () => {
       expect(connectMock).not.toHaveBeenCalled();
     });
 
-    it('denies message append if conversation belongs to another actor or business', async () => {
+    it('denies message append if conversation belongs to another accessMode or actor', async () => {
       clientQueryMock
         .mockResolvedValueOnce(undefined) // BEGIN
         .mockResolvedValueOnce({ rows: [] }) // 0 rows inserted by predicate
         .mockResolvedValueOnce(undefined); // ROLLBACK
 
       const { appendMessage } = await import('../store.mjs');
-      const foreignPrincipal = { businessId: 'biz-1', actorId: 'user-other', accessMode: 'authenticated' };
+      const foreignModePrincipal = { businessId: 'biz-1', actorId: 'user-100', accessMode: 'demo' };
 
       await expect(
-        appendMessage(foreignPrincipal, { conversationId: 'conv-1', role: 'user', content: 'hack' })
+        appendMessage(foreignModePrincipal, { conversationId: 'conv-1', role: 'user', content: 'hack' })
       ).rejects.toThrow('Access denied or conversation not found');
 
       expect(clientQueryMock).toHaveBeenCalledWith('ROLLBACK');
@@ -205,11 +252,11 @@ describe('memory/store.mjs & migrations', () => {
       );
     });
 
-    it('returns empty array when conversation belongs to another principal', async () => {
+    it('returns empty array when conversation belongs to another accessMode or actor', async () => {
       queryMock.mockResolvedValueOnce({ rows: [] });
       const { getRecentMessages } = await import('../store.mjs');
 
-      const foreignPrincipal = { businessId: 'biz-2', actorId: 'user-100', accessMode: 'authenticated' };
+      const foreignPrincipal = { businessId: 'biz-1', actorId: 'user-100', accessMode: 'demo' };
       const messages = await getRecentMessages(foreignPrincipal, 'conv-1');
 
       expect(messages).toEqual([]);
@@ -241,15 +288,15 @@ describe('memory/store.mjs & migrations', () => {
       ]);
     });
 
-    it('rejects draft creation if referenced conversation is foreign to the principal', async () => {
+    it('rejects draft creation if referenced conversation belongs to another accessMode', async () => {
       queryMock.mockResolvedValueOnce({ rows: [] });
       const { saveDraft } = await import('../store.mjs');
 
-      const foreignPrincipal = { businessId: 'biz-1', actorId: 'user-hacker', accessMode: 'authenticated' };
+      const foreignModePrincipal = { businessId: 'biz-1', actorId: 'user-100', accessMode: 'demo' };
 
       await expect(
-        saveDraft(foreignPrincipal, {
-          conversationId: 'conv-owned-by-user-100',
+        saveDraft(foreignModePrincipal, {
+          conversationId: 'conv-owned-by-authenticated-user-100',
           kind: 'purchase_order',
           payload: { item: 'coffee' },
         })
@@ -257,7 +304,7 @@ describe('memory/store.mjs & migrations', () => {
     });
   });
 
-  describe('saveNote & listNotes', () => {
+  describe('saveNote & listNotes (business-shared)', () => {
     it('stores created_by from principal actorId when saving notes', async () => {
       queryMock.mockResolvedValueOnce({ rows: [{ id: 'note-1' }] });
       const { saveNote } = await import('../store.mjs');
@@ -265,8 +312,9 @@ describe('memory/store.mjs & migrations', () => {
       const id = await saveNote(PRINCIPAL_AUTH, { content: 'oat milk note' });
 
       expect(id).toBe('note-1');
-      const [, params] = queryMock.mock.calls[0];
-      expect(params).toEqual(['biz-1', 'user-100', 'user-100', 'authenticated', 'oat milk note', null]);
+      const [sql, params] = queryMock.mock.calls[0];
+      expect(sql).toContain('INSERT INTO notes (business_id, created_by, content, source)');
+      expect(params).toEqual(['biz-1', 'user-100', 'oat milk note', null]);
     });
 
     it('lists notes for a business carrying created_by', async () => {

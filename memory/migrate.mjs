@@ -12,6 +12,35 @@ const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 loadEnv({ path: path.join(REPO_ROOT, '.env.local') });
 
 const { Pool } = pg;
+const ZERO_PADDED_REGEX = /^\d{3}_[a-z0-9_-]+\.sql$/i;
+
+export async function runPreflightChecks(client) {
+  const { rows: draftRows } = await client.query(`
+    SELECT COUNT(*)::int AS count
+      FROM drafts d
+      LEFT JOIN conversations c ON d.conversation_id = c.id
+     WHERE d.conversation_id IS NOT NULL
+       AND (c.id IS NULL OR d.business_id <> c.business_id)
+  `);
+  const invalidDraftsCount = draftRows[0]?.count || 0;
+
+  const { rows: docRows } = await client.query(`
+    SELECT COUNT(*)::int AS count FROM (
+      SELECT business_id, doc_type, doc_date
+        FROM documents
+       WHERE doc_date IS NOT NULL
+       GROUP BY business_id, doc_type, doc_date
+      HAVING COUNT(*) > 1
+    ) dupes
+  `);
+  const duplicateDocsCount = docRows[0]?.count || 0;
+
+  if (invalidDraftsCount > 0 || duplicateDocsCount > 0) {
+    throw new Error(
+      `Preflight check failed: found ${invalidDraftsCount} invalid draft(s) with mismatched conversation references and ${duplicateDocsCount} duplicate dated document group(s). Action required before migration 001.`
+    );
+  }
+}
 
 export function renderSchema({ embeddingDim, schemaPath = path.join(REPO_ROOT, 'memory', 'schema.sql') } = {}) {
   if (!embeddingDim) {
@@ -27,6 +56,9 @@ export function renderSchema({ embeddingDim, schemaPath = path.join(REPO_ROOT, '
       .filter((f) => f.endsWith('.sql'))
       .sort();
     for (const file of files) {
+      if (!ZERO_PADDED_REGEX.test(file)) {
+        throw new Error(`Invalid migration filename format: "${file}". Filenames must be zero-padded 3-digit numbers like "001_name.sql".`);
+      }
       const content = readFileSync(path.join(migrationsDir, file), 'utf8');
       migrationSql += `\n-- Migration: ${file}\n` + content.replaceAll('__EMBEDDING_DIM__', String(embeddingDim));
     }
@@ -71,9 +103,17 @@ export async function runMigrations({ client, embeddingDim, migrationsDir = path
   }
 
   for (const file of files) {
+    if (!ZERO_PADDED_REGEX.test(file)) {
+      throw new Error(`Invalid migration filename format: "${file}". Filenames must be zero-padded 3-digit numbers like "001_name.sql".`);
+    }
+
     const { rows } = await client.query('SELECT version FROM schema_migrations WHERE version = $1', [file]);
     if (rows.length > 0) {
       continue;
+    }
+
+    if (file.startsWith('001_')) {
+      await runPreflightChecks(client);
     }
 
     const migrationContent = readFileSync(path.join(migrationsDir, file), 'utf8');
