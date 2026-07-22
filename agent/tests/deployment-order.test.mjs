@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { applyGuardedFunctionUpdate } from '../deployment-order.mjs';
+import { waitForSuccessfulLambdaUpdate } from '../lambda-update-waiter.mjs';
 
 describe('guarded Lambda deployment ordering', () => {
   it('sets existing public function concurrency to zero before updating, then restores the bound', async () => {
@@ -79,6 +80,50 @@ describe('guarded Lambda deployment ordering', () => {
     expect(setConcurrency).toHaveBeenCalledWith(0);
     expect(release).toHaveBeenCalledTimes(1);
   });
+
+  for (const failedStage of ['code', 'configuration']) {
+    it(`keeps concurrency at zero and releases the lock when the ${failedStage} update reaches Lambda Failed`, async () => {
+      const setConcurrency = vi.fn();
+      const release = vi.fn();
+      const failedStatus = {
+        State: 'Active',
+        LastUpdateStatus: 'Failed',
+        LastUpdateStatusReasonCode: 'InvalidConfiguration',
+      };
+
+      await expect(applyGuardedFunctionUpdate({
+        existingRuntime: 'nodejs22.x',
+        targetConcurrency: 5,
+        setConcurrency,
+        acquireDeploymentLock: async () => ({
+          token: 'owner',
+          assertOwnership: vi.fn(),
+          release,
+        }),
+        updateExisting: async () => {
+          const updates = failedStage === 'code'
+            ? [[{ State: 'Pending', LastUpdateStatus: 'InProgress' }, failedStatus]]
+            : [[
+              { State: 'Active', LastUpdateStatus: 'Successful' },
+            ], [
+              { State: 'Pending', LastUpdateStatus: 'InProgress' },
+              failedStatus,
+            ]];
+          for (const responses of updates) {
+            await waitForSuccessfulLambdaUpdate({
+              getConfiguration: async () => responses.shift(),
+              sleep: async () => {},
+            });
+          }
+        },
+        createNew: vi.fn(),
+      })).rejects.toThrow('Lambda update failed');
+
+      expect(setConcurrency).toHaveBeenCalledTimes(1);
+      expect(setConcurrency).toHaveBeenCalledWith(0);
+      expect(release).toHaveBeenCalledTimes(1);
+    });
+  }
 
   it('bounds a new function before any later URL exposure step', async () => {
     const calls = [];

@@ -40,6 +40,7 @@ import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 import { assertStagingUrl } from '../pos-client.mjs';
 import { applyGuardedFunctionUpdate } from '../deployment-order.mjs';
 import { acquireLambdaDeploymentLock, withDeploymentLock } from '../deployment-lock.mjs';
+import { waitForSuccessfulLambdaUpdate } from '../lambda-update-waiter.mjs';
 
 const AGENT_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const REPO_ROOT = path.dirname(AGENT_DIR);
@@ -231,12 +232,10 @@ async function getExistingRuntime() {
 }
 
 async function waitForFunctionReady() {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    const res = await lambdaClient.send(new GetFunctionConfigurationCommand({ FunctionName: FUNCTION_NAME }));
-    if (res.State !== 'Pending' && res.LastUpdateStatus !== 'InProgress') return res;
-    await sleep(2000);
-  }
-  throw new Error('Timed out waiting for the Lambda function to finish updating');
+  return waitForSuccessfulLambdaUpdate({
+    getConfiguration: () => lambdaClient.send(new GetFunctionConfigurationCommand({ FunctionName: FUNCTION_NAME })),
+    sleep,
+  });
 }
 
 async function createFunctionWithRetry({ runtime, roleArn, zipBuffer, envVars }) {
