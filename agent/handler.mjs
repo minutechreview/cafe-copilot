@@ -2,36 +2,10 @@
 // businessId, onEvent})` streams the turn as it happens via `onEvent`, so the exact same
 // code works locally today (dev-server.mjs relays events as Server-Sent Events) and later
 // behind AWS Lambda response streaming (C6) without changes to this file.
-//
-// Event shapes emitted to onEvent:
-//   {type:'delta', text}                          — a chunk of assistant text, in order
-//   {type:'draft', draft}                          — a draft_purchase_order result was saved
-//   {type:'done', conversationId, reply}           — the turn finished with a final answer
-//   {type:'error', message}                        — the turn failed; message is plain-language
-//
-// The handler runs a tool-calling agent loop against Bedrock's Converse **stream** API: send
-// the conversation so far (+ tool config) → forward text deltas as they arrive → if the turn
-// ends with tool_use, execute the buffered tool call(s) and feed the results back → repeat,
-// capped at MAX_ITERATIONS. Tool definitions and dispatch live in tools.mjs so this file only
-// owns the loop's control flow, the streaming/event contract, and persistence.
-//
-// Conversation persistence lives in memory/store.mjs (CockroachDB): each call ensures a
-// conversation exists, loads recent history as Converse context, and saves both sides of
-// the turn (the user's message and the model's final text reply — not the intermediate
-// tool traffic) once the loop produces an answer.
-//
-// Error handling: only input/config validation that happens before any Bedrock call throws
-// synchronously (message missing, model not configured) — a caller can safely treat that as
-// an HTTP 400/500 before committing to a response. Every failure that can happen mid-turn
-// (memory lookup, the Bedrock loop itself, an empty final reply) is instead reported via an
-// {type:'error'} event and the promise resolves, because a streamed response may already be
-// underway by the time it happens and its status code can no longer change.
 import { BedrockRuntimeClient, ConverseStreamCommand } from '@aws-sdk/client-bedrock-runtime';
 import { createConversation, appendMessage, getRecentMessages } from '../memory/store.mjs';
 import { toolConfig, executeTool } from './tools.mjs';
 
-// Constructed once at module load so a warm Lambda invocation (or the long-lived dev
-// server process) reuses the same client/connection instead of paying setup cost per call.
 const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION });
 
 const DEFAULT_BUSINESS_ID = process.env.DEMO_BUSINESS_ID || 'demo-cafe';
@@ -217,7 +191,7 @@ async function runAgentLoopStreaming({ systemPrompt, modelId, initialMessages, c
 }
 
 /**
- * @param {{ message: string, conversationId?: string, businessId?: string, principal?: object, actorId?: string, accessMode?: string, posClient?: object, onEvent?: (event: object) => void }} input
+ * @param {{ message: string, conversationId?: string, businessId?: string, principal?: object, posClient?: object, onEvent?: (event: object) => void }} input
  * @returns {Promise<void>}
  */
 export async function handler({
@@ -225,8 +199,6 @@ export async function handler({
   conversationId,
   businessId,
   principal,
-  actorId,
-  accessMode,
   posClient,
   onEvent = () => {},
 } = {}) {
@@ -239,12 +211,25 @@ export async function handler({
     throw new Error('BEDROCK_MODEL_ID is not configured');
   }
 
-  const activeBusinessId = businessId || principal?.businessId || DEFAULT_BUSINESS_ID;
-  const activePrincipal = principal || {
-    businessId: activeBusinessId,
-    actorId: actorId || 'legacy_demo',
-    accessMode: accessMode || 'legacy_demo',
-  };
+  let activePrincipal;
+  if (principal) {
+    if (typeof principal !== 'object' || !principal.businessId || !principal.actorId || !principal.accessMode) {
+      throw new ValidationError('invalid principal shape');
+    }
+    if (businessId && businessId !== principal.businessId) {
+      throw new ValidationError('businessId mismatch between parameter and principal');
+    }
+    activePrincipal = principal;
+  } else {
+    const activeBusinessId = businessId || DEFAULT_BUSINESS_ID;
+    activePrincipal = {
+      businessId: activeBusinessId,
+      actorId: 'legacy_demo',
+      accessMode: 'legacy_demo',
+    };
+  }
+
+  const activeBusinessId = activePrincipal.businessId;
 
   let activeConversationId = conversationId;
   let history = [];

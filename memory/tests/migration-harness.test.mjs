@@ -274,9 +274,9 @@ describe('Migration Rehearsal Harness', () => {
     harness = new InMemoryDatabaseHarness();
   });
 
-  it('reports environment status & runs non-mock fresh-database bootstrap rehearsal', async () => {
+  it('reports environment status & runs isolated statement-level migration rehearsal', async () => {
     console.log(
-      '[MIGRATION REHEARSAL] No live CockroachDB cluster on localhost:26257 — running isolated SQL state-machine rehearsal harness.'
+      '[MIGRATION REHEARSAL] Isolated statement-level SQL sequence test runner (live CockroachDB cluster unavailable on localhost:26257).'
     );
 
     const client = { query: (sql, params) => Promise.resolve(harness.query(sql, params)) };

@@ -401,6 +401,34 @@ describe('agent/tools.mjs', () => {
           'query is required'
         );
       });
+
+      it('rejects tool execution when ctx is missing or null', async () => {
+        const { executeTool } = await import('../tools.mjs');
+        await expect(executeTool('search_memory', { query: 'test' }, null)).rejects.toThrow(
+          'tool context is required'
+        );
+      });
+
+      it('rejects tool execution when ctx.businessId disagrees with ctx.principal.businessId', async () => {
+        const { executeTool } = await import('../tools.mjs');
+        const mismatchedCtx = {
+          businessId: 'biz-A',
+          principal: { businessId: 'biz-B', actorId: 'u-1', accessMode: 'authenticated' },
+        };
+        await expect(executeTool('search_memory', { query: 'test' }, mismatchedCtx)).rejects.toThrow(
+          'businessId mismatch in tool context'
+        );
+      });
+
+      it('rejects tool execution when ctx.principal shape is invalid', async () => {
+        const { executeTool } = await import('../tools.mjs');
+        const invalidCtx = {
+          principal: { businessId: 'biz-A' }, // missing actorId/accessMode
+        };
+        await expect(executeTool('search_memory', { query: 'test' }, invalidCtx)).rejects.toThrow(
+          'invalid principal shape in tool context'
+        );
+      });
     });
 
     describe('save_note / list_notes', () => {

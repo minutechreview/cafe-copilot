@@ -49,20 +49,41 @@ describe('memory/store.mjs & migrations', () => {
     expect(PoolMock).toHaveBeenCalledWith({ connectionString: process.env.CRDB_CONNECTION_STRING });
   });
 
+  describe('splitSqlStatements utility', () => {
+    it('splits SQL content on semicolons, strips comments, and preserves multi-line statements', async () => {
+      const { splitSqlStatements } = await import('../migrate.mjs');
+
+      const rawSql = `
+        -- Header comment line
+        CREATE TABLE conversations (
+          id UUID PRIMARY KEY, -- inline comment
+          title TEXT
+        );
+
+        -- Section break comment
+        ALTER TABLE conversations
+          ADD COLUMN actor_id TEXT;
+      `;
+
+      const statements = splitSqlStatements(rawSql);
+
+      expect(statements).toHaveLength(2);
+      expect(statements[0]).toContain('CREATE TABLE conversations');
+      expect(statements[0]).not.toContain('-- Header comment line');
+      expect(statements[0]).not.toContain('-- inline comment');
+      expect(statements[1]).toContain('ALTER TABLE conversations');
+      expect(statements[1]).toContain('ADD COLUMN actor_id TEXT');
+    });
+  });
+
   describe('migration ledger, preflight checks & zero-padded filenames', () => {
-    it('discovers 001 is pending with zero mutations, runs preflight checks BEFORE any DDL, and applies 001 migration safely', async () => {
+    it('discovers 001 is pending with zero mutations, runs preflight checks BEFORE any DDL, and applies 001 migration as individual statements', async () => {
       const client = { query: clientQueryMock };
       clientQueryMock
-        .mockResolvedValueOnce({ rows: [{ rel: null }] }) // to_regclass schema_migrations (read-only pending check -> pending!)
-        .mockResolvedValueOnce({ rows: [{ rel: 'drafts' }] }) // to_regclass drafts (read-only)
-        .mockResolvedValueOnce({ rows: [{ rel: 'documents' }] }) // to_regclass docs (read-only)
-        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight drafts (read-only)
-        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight docs (read-only)
-        .mockResolvedValueOnce(undefined) // CREATE TABLE schema_migrations (first mutation!)
-        .mockResolvedValueOnce(undefined) // schema.sql DDL
-        .mockResolvedValueOnce({ rows: [] }) // 001 applied check
-        .mockResolvedValueOnce(undefined) // 001 migration DDL
-        .mockResolvedValueOnce(undefined); // INSERT schema_migrations ledger
+        .mockResolvedValueOnce({ rows: [{ rel: null }] }) // to_regclass schema_migrations
+        .mockResolvedValueOnce({ rows: [{ rel: 'drafts' }] }) // to_regclass drafts
+        .mockResolvedValueOnce({ rows: [{ rel: 'documents' }] }) // to_regclass docs
+        .mockResolvedValue({ rows: [] });
 
       const { runMigrations } = await import('../migrate.mjs');
       await runMigrations({ client, embeddingDim: 1536 });
@@ -75,7 +96,14 @@ describe('memory/store.mjs & migrations', () => {
       expect(clientQueryMock).toHaveBeenNthCalledWith(5, expect.stringContaining('FROM documents'));
       // Sixth query is the FIRST mutation (CREATE TABLE schema_migrations)
       expect(clientQueryMock).toHaveBeenNthCalledWith(6, expect.stringContaining('CREATE TABLE IF NOT EXISTS schema_migrations'));
-      expect(clientQueryMock).toHaveBeenCalledWith(
+
+      // Verify individual SQL statements were issued per client.query call
+      const sqlCalls = clientQueryMock.mock.calls.map((c) => String(c[0]));
+      expect(sqlCalls.some((sql) => sql.includes('ALTER TABLE drafts DROP CONSTRAINT IF EXISTS drafts_conversation_fk'))).toBe(true);
+      expect(sqlCalls.some((sql) => sql.includes('ADD CONSTRAINT conversations_id_business_actor_mode_key'))).toBe(true);
+
+      // Final call is the ledger write
+      expect(clientQueryMock).toHaveBeenLastCalledWith(
         'INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING',
         ['001_principal_ownership.sql']
       );
@@ -95,7 +123,6 @@ describe('memory/store.mjs & migrations', () => {
         /Preflight check failed: found 0 invalid draft\(s\).*and 3 duplicate dated document group\(s\)/
       );
 
-      // Verify ZERO mutation SQL statements were executed before preflight threw
       const mutationVerbs = ['CREATE', 'BEGIN', 'INSERT', 'UPDATE', 'ALTER', 'DELETE', 'DROP'];
       for (const call of clientQueryMock.mock.calls) {
         const sql = String(call[0]).trim().toUpperCase();
@@ -105,25 +132,35 @@ describe('memory/store.mjs & migrations', () => {
       }
     });
 
-    it('proves fresh-database bootstrap path runs cleanly when tables do not exist', async () => {
+    it('proves statement failure prevents ledger write, and resume completes safely', async () => {
       const client = { query: clientQueryMock };
-      clientQueryMock
-        .mockResolvedValueOnce({ rows: [{ rel: null }] }) // to_regclass schema_migrations -> null (pending)
-        .mockResolvedValueOnce({ rows: [{ rel: null }] }) // to_regclass drafts -> null (fresh DB)
-        .mockResolvedValueOnce({ rows: [{ rel: null }] }) // to_regclass docs -> null (fresh DB)
-        .mockResolvedValueOnce(undefined) // CREATE TABLE schema_migrations
-        .mockResolvedValueOnce(undefined) // schema.sql
-        .mockResolvedValueOnce({ rows: [] }) // 001 applied check
-        .mockResolvedValueOnce(undefined) // 001 sql
-        .mockResolvedValueOnce(undefined); // INSERT schema_migrations
+      // Simulate statement error on 10th query
+      let queryCount = 0;
+      clientQueryMock.mockImplementation(() => {
+        queryCount += 1;
+        if (queryCount === 10) {
+          return Promise.reject(new Error('CockroachDB transient execution error'));
+        }
+        return Promise.resolve({ rows: [] });
+      });
 
       const { runMigrations } = await import('../migrate.mjs');
+      await expect(runMigrations({ client, embeddingDim: 1536 })).rejects.toThrow(
+        'CockroachDB transient execution error'
+      );
+
+      // Verify ledger write was NOT performed when statement 10 failed
+      expect(clientQueryMock).not.toHaveBeenCalledWith(
+        'INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING',
+        ['001_principal_ownership.sql']
+      );
+
+      // Now retry runMigrations (resumable/idempotent check)
+      clientQueryMock.mockReset();
+      clientQueryMock.mockResolvedValue({ rows: [] });
       await runMigrations({ client, embeddingDim: 1536 });
 
-      expect(clientQueryMock).not.toHaveBeenCalledWith(expect.stringContaining('FROM drafts d'));
-      expect(clientQueryMock).not.toHaveBeenCalledWith(expect.stringContaining('GROUP BY business_id, doc_type, doc_date'));
-      expect(clientQueryMock).toHaveBeenNthCalledWith(4, expect.stringContaining('CREATE TABLE IF NOT EXISTS schema_migrations'));
-      expect(clientQueryMock).toHaveBeenCalledWith(
+      expect(clientQueryMock).toHaveBeenLastCalledWith(
         'INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING',
         ['001_principal_ownership.sql']
       );
@@ -132,11 +169,9 @@ describe('memory/store.mjs & migrations', () => {
     it('skips preflight checks when 001 migration has already been applied', async () => {
       const client = { query: clientQueryMock };
       clientQueryMock
-        .mockResolvedValueOnce({ rows: [{ rel: 'schema_migrations' }] }) // to_regclass schema_migrations -> exists
-        .mockResolvedValueOnce({ rows: [{ version: '001_principal_ownership.sql' }] }) // check if 001 is pending -> applied!
-        .mockResolvedValueOnce(undefined) // CREATE TABLE schema_migrations
-        .mockResolvedValueOnce(undefined) // schema.sql
-        .mockResolvedValueOnce({ rows: [{ version: '001_principal_ownership.sql' }] }); // 001 applied check in loop
+        .mockResolvedValueOnce({ rows: [{ rel: 'schema_migrations' }] })
+        .mockResolvedValueOnce({ rows: [{ version: '001_principal_ownership.sql' }] })
+        .mockResolvedValue({ rows: [{ version: '001_principal_ownership.sql' }] });
 
       const { runMigrations } = await import('../migrate.mjs');
       await runMigrations({ client, embeddingDim: 1536 });

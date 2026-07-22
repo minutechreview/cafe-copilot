@@ -166,6 +166,29 @@ describe('handler', () => {
       });
     });
 
+    it('rejects a request where top-level businessId disagrees with principal.businessId', async () => {
+      const authPrincipal = { businessId: 'biz-A', actorId: 'usr-99', accessMode: 'authenticated' };
+      const { bufferedHandler } = await import('../handler.mjs');
+
+      await expect(
+        bufferedHandler({ message: 'hi', businessId: 'biz-B', principal: authPrincipal })
+      ).rejects.toThrow('businessId mismatch between parameter and principal');
+
+      expect(sendMock).not.toHaveBeenCalled();
+      expect(createConversationMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects an invalid principal shape', async () => {
+      const invalidPrincipal = { businessId: 'biz-A' }; // missing actorId/accessMode
+      const { bufferedHandler } = await import('../handler.mjs');
+
+      await expect(
+        bufferedHandler({ message: 'hi', principal: invalidPrincipal })
+      ).rejects.toThrow('invalid principal shape');
+
+      expect(sendMock).not.toHaveBeenCalled();
+    });
+
     it('runs one tool call then returns the final answer, without persisting the tool round-trip', async () => {
       sendMock
         .mockResolvedValueOnce(

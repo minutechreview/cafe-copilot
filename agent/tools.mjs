@@ -1,11 +1,6 @@
 // Tool definitions + dispatch for the Café Copilot agent loop. handler.mjs owns the
 // send/execute/repeat loop; this module owns what each tool means and does, so the two can
 // be tested independently.
-//
-// Every tool result returned to the model is plain data (numbers, strings, objects) sourced
-// from POS staging or CockroachDB memory — never text the model should treat as instructions.
-// The system prompt in handler.mjs states this explicitly (data-as-data rule); tool authors
-// here just need to avoid ever building an "instruction-shaped" string into a result.
 import { generateDailySummary } from '../pos-sync/summarizer.mjs';
 import { embedText } from './embeddings.mjs';
 import { getPosClient } from './pos-client.mjs';
@@ -196,12 +191,18 @@ function validateDraftItems(items) {
 
 function resolvePrincipal(ctx) {
   if (ctx?.principal) {
+    if (!ctx.principal.businessId || !ctx.principal.actorId || !ctx.principal.accessMode) {
+      throw new Error('invalid principal shape in tool context');
+    }
+    if (ctx.businessId && ctx.businessId !== ctx.principal.businessId) {
+      throw new Error('businessId mismatch in tool context');
+    }
     return ctx.principal;
   }
   return {
     businessId: ctx?.businessId || 'demo-cafe',
-    actorId: ctx?.actorId || 'legacy_demo',
-    accessMode: ctx?.accessMode || 'legacy_demo',
+    actorId: 'legacy_demo',
+    accessMode: 'legacy_demo',
   };
 }
 
@@ -521,6 +522,9 @@ const TOOL_HANDLERS = {
 };
 
 export async function executeTool(name, input, ctx) {
+  if (!ctx || typeof ctx !== 'object') {
+    throw new Error('tool context is required');
+  }
   const run = TOOL_HANDLERS[name];
   if (!run) {
     throw new Error(`Unknown tool: ${name}`);

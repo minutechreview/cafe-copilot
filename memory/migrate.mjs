@@ -14,6 +14,28 @@ loadEnv({ path: path.join(REPO_ROOT, '.env.local') });
 const { Pool } = pg;
 const ZERO_PADDED_REGEX = /^\d{3}_[a-z0-9_-]+\.sql$/i;
 
+/**
+ * Splits a SQL file string into individual executable SQL statements, stripping
+ * single-line comments (-- ...) and blank lines while preserving multi-line statements.
+ */
+export function splitSqlStatements(sqlContent) {
+  const lines = sqlContent
+    .split('\n')
+    .map((line) => {
+      const commentIdx = line.indexOf('--');
+      if (commentIdx !== -1) {
+        return line.slice(0, commentIdx);
+      }
+      return line;
+    });
+
+  const cleaned = lines.join('\n');
+  return cleaned
+    .split(';')
+    .map((stmt) => stmt.trim())
+    .filter((stmt) => stmt.length > 0);
+}
+
 export async function isMigrationPending(client, version) {
   const { rows } = await client.query(`SELECT to_regclass('public.schema_migrations') AS rel`);
   const hasLedger = Boolean(rows[0]?.rel);
@@ -132,7 +154,7 @@ export async function runMigrations({ client, embeddingDim, migrationsDir = path
     await runPreflightChecks(client);
   }
 
-  // DDL execution (idempotent, CockroachDB-safe without wrapping multi-statement DDL+DML transactions)
+  // Ledger table creation (idempotent statement)
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version TEXT PRIMARY KEY,
@@ -140,10 +162,15 @@ export async function runMigrations({ client, embeddingDim, migrationsDir = path
     );
   `);
 
+  // Execute base schema.sql as individual statements
   const baseSqlTemplate = readFileSync(schemaPath, 'utf8');
   const baseSql = baseSqlTemplate.replaceAll('__EMBEDDING_DIM__', String(embeddingDim));
-  await client.query(baseSql);
+  const baseStatements = splitSqlStatements(baseSql);
+  for (const stmt of baseStatements) {
+    await client.query(stmt);
+  }
 
+  // Execute each pending migration file as individual statements (CockroachDB autocommit safe)
   for (const file of files) {
     const { rows } = await client.query('SELECT version FROM schema_migrations WHERE version = $1', [file]);
     if (rows.length > 0) {
@@ -152,8 +179,13 @@ export async function runMigrations({ client, embeddingDim, migrationsDir = path
 
     const migrationContent = readFileSync(path.join(migrationsDir, file), 'utf8');
     const migrationSql = migrationContent.replaceAll('__EMBEDDING_DIM__', String(embeddingDim));
+    const statements = splitSqlStatements(migrationSql);
 
-    await client.query(migrationSql);
+    for (const stmt of statements) {
+      await client.query(stmt);
+    }
+
+    // Write to ledger ONLY after all individual migration statements succeeded
     await client.query(
       'INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING',
       [file]
