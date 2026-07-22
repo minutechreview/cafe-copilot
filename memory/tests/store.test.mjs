@@ -50,16 +50,16 @@ describe('memory/store.mjs & migrations', () => {
   });
 
   describe('migration ledger, preflight checks & zero-padded filenames', () => {
-    it('runs preflight checks and applies 001 migration inside transactions', async () => {
+    it('runs preflight checks BEFORE schema.sql DDL and applies 001 migration inside transactions', async () => {
       const client = { query: clientQueryMock };
       clientQueryMock
         .mockResolvedValueOnce({ rows: [] }) // schema_migrations check
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight drafts (BEFORE schema DDL)
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight docs (BEFORE schema DDL)
         .mockResolvedValueOnce(undefined) // BEGIN schema.sql
         .mockResolvedValueOnce(undefined) // schema.sql
         .mockResolvedValueOnce(undefined) // COMMIT schema.sql
         .mockResolvedValueOnce({ rows: [] }) // 001 applied check
-        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight drafts
-        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight docs
         .mockResolvedValueOnce(undefined) // BEGIN 001
         .mockResolvedValueOnce(undefined) // 001 sql
         .mockResolvedValueOnce(undefined) // INSERT schema_migrations
@@ -68,18 +68,17 @@ describe('memory/store.mjs & migrations', () => {
       const { runMigrations } = await import('../migrate.mjs');
       await runMigrations({ client, embeddingDim: 1536 });
 
-      expect(clientQueryMock).toHaveBeenCalledWith(expect.stringContaining('CREATE TABLE IF NOT EXISTS schema_migrations'));
+      expect(clientQueryMock).toHaveBeenNthCalledWith(1, expect.stringContaining('CREATE TABLE IF NOT EXISTS schema_migrations'));
+      expect(clientQueryMock).toHaveBeenNthCalledWith(2, expect.stringContaining('FROM drafts d'));
+      expect(clientQueryMock).toHaveBeenNthCalledWith(3, expect.stringContaining('FROM documents'));
+      expect(clientQueryMock).toHaveBeenNthCalledWith(4, 'BEGIN');
       expect(clientQueryMock).toHaveBeenCalledWith('INSERT INTO schema_migrations (version) VALUES ($1)', ['001_principal_ownership.sql']);
     });
 
-    it('fails preflight check before DDL if invalid drafts exist', async () => {
+    it('fails preflight check BEFORE schema.sql DDL starts if invalid drafts exist', async () => {
       const client = { query: clientQueryMock };
       clientQueryMock
         .mockResolvedValueOnce({ rows: [] }) // schema_migrations check
-        .mockResolvedValueOnce(undefined) // BEGIN schema.sql
-        .mockResolvedValueOnce(undefined) // schema.sql
-        .mockResolvedValueOnce(undefined) // COMMIT schema.sql
-        .mockResolvedValueOnce({ rows: [] }) // 001 applied check
         .mockResolvedValueOnce({ rows: [{ count: 2 }] }) // preflight drafts finds 2 invalid
         .mockResolvedValueOnce({ rows: [{ count: 0 }] }); // preflight docs
 
@@ -87,16 +86,15 @@ describe('memory/store.mjs & migrations', () => {
       await expect(runMigrations({ client, embeddingDim: 1536 })).rejects.toThrow(
         /Preflight check failed: found 2 invalid draft\(s\)/
       );
+
+      // Verify BEGIN (schema DDL) was NEVER called because preflight failed first
+      expect(clientQueryMock).not.toHaveBeenCalledWith('BEGIN');
     });
 
-    it('fails preflight check before DDL if duplicate dated documents exist', async () => {
+    it('fails preflight check BEFORE schema.sql DDL starts if duplicate dated documents exist', async () => {
       const client = { query: clientQueryMock };
       clientQueryMock
         .mockResolvedValueOnce({ rows: [] }) // schema_migrations check
-        .mockResolvedValueOnce(undefined) // BEGIN schema.sql
-        .mockResolvedValueOnce(undefined) // schema.sql
-        .mockResolvedValueOnce(undefined) // COMMIT schema.sql
-        .mockResolvedValueOnce({ rows: [] }) // 001 applied check
         .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight drafts
         .mockResolvedValueOnce({ rows: [{ count: 3 }] }); // preflight docs finds 3 duplicate groups
 
@@ -104,6 +102,8 @@ describe('memory/store.mjs & migrations', () => {
       await expect(runMigrations({ client, embeddingDim: 1536 })).rejects.toThrow(
         /Preflight check failed: found 0 invalid draft\(s\).*and 3 duplicate dated document group\(s\)/
       );
+
+      expect(clientQueryMock).not.toHaveBeenCalledWith('BEGIN');
     });
   });
 

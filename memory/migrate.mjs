@@ -81,18 +81,6 @@ export async function runMigrations({ client, embeddingDim, migrationsDir = path
     );
   `);
 
-  const baseSqlTemplate = readFileSync(schemaPath, 'utf8');
-  const baseSql = baseSqlTemplate.replaceAll('__EMBEDDING_DIM__', String(embeddingDim));
-
-  await client.query('BEGIN');
-  try {
-    await client.query(baseSql);
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  }
-
   let files;
   try {
     files = readdirSync(migrationsDir)
@@ -106,14 +94,27 @@ export async function runMigrations({ client, embeddingDim, migrationsDir = path
     if (!ZERO_PADDED_REGEX.test(file)) {
       throw new Error(`Invalid migration filename format: "${file}". Filenames must be zero-padded 3-digit numbers like "001_name.sql".`);
     }
+  }
 
+  // Preflight checks run BEFORE any DDL statement (including schema.sql) to prevent unique index DDL failures on existing data
+  await runPreflightChecks(client);
+
+  const baseSqlTemplate = readFileSync(schemaPath, 'utf8');
+  const baseSql = baseSqlTemplate.replaceAll('__EMBEDDING_DIM__', String(embeddingDim));
+
+  await client.query('BEGIN');
+  try {
+    await client.query(baseSql);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  }
+
+  for (const file of files) {
     const { rows } = await client.query('SELECT version FROM schema_migrations WHERE version = $1', [file]);
     if (rows.length > 0) {
       continue;
-    }
-
-    if (file.startsWith('001_')) {
-      await runPreflightChecks(client);
     }
 
     const migrationContent = readFileSync(path.join(migrationsDir, file), 'utf8');
