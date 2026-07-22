@@ -50,12 +50,14 @@ describe('memory/store.mjs & migrations', () => {
   });
 
   describe('migration ledger, preflight checks & zero-padded filenames', () => {
-    it('runs preflight checks BEFORE schema.sql DDL and applies 001 migration inside transactions', async () => {
+    it('discovers 001 is pending, runs preflight checks BEFORE schema.sql DDL, and applies 001 migration inside transactions', async () => {
       const client = { query: clientQueryMock };
       clientQueryMock
-        .mockResolvedValueOnce({ rows: [] }) // schema_migrations check
-        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight drafts (BEFORE schema DDL)
-        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight docs (BEFORE schema DDL)
+        .mockResolvedValueOnce({ rows: [] }) // schema_migrations table creation
+        .mockResolvedValueOnce({ rows: [] }) // check if 001 is pending -> pending!
+        .mockResolvedValueOnce({ rows: [{ 1: 1 }] }) // drafts table exists check
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight drafts
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight docs
         .mockResolvedValueOnce(undefined) // BEGIN schema.sql
         .mockResolvedValueOnce(undefined) // schema.sql
         .mockResolvedValueOnce(undefined) // COMMIT schema.sql
@@ -69,16 +71,20 @@ describe('memory/store.mjs & migrations', () => {
       await runMigrations({ client, embeddingDim: 1536 });
 
       expect(clientQueryMock).toHaveBeenNthCalledWith(1, expect.stringContaining('CREATE TABLE IF NOT EXISTS schema_migrations'));
-      expect(clientQueryMock).toHaveBeenNthCalledWith(2, expect.stringContaining('FROM drafts d'));
-      expect(clientQueryMock).toHaveBeenNthCalledWith(3, expect.stringContaining('FROM documents'));
-      expect(clientQueryMock).toHaveBeenNthCalledWith(4, 'BEGIN');
+      expect(clientQueryMock).toHaveBeenNthCalledWith(2, 'SELECT version FROM schema_migrations WHERE version = $1', ['001_principal_ownership.sql']);
+      expect(clientQueryMock).toHaveBeenNthCalledWith(3, expect.stringContaining("WHERE table_name = 'drafts'"));
+      expect(clientQueryMock).toHaveBeenNthCalledWith(4, expect.stringContaining('FROM drafts d'));
+      expect(clientQueryMock).toHaveBeenNthCalledWith(5, expect.stringContaining('FROM documents'));
+      expect(clientQueryMock).toHaveBeenNthCalledWith(6, 'BEGIN');
       expect(clientQueryMock).toHaveBeenCalledWith('INSERT INTO schema_migrations (version) VALUES ($1)', ['001_principal_ownership.sql']);
     });
 
     it('fails preflight check BEFORE schema.sql DDL starts if invalid drafts exist', async () => {
       const client = { query: clientQueryMock };
       clientQueryMock
-        .mockResolvedValueOnce({ rows: [] }) // schema_migrations check
+        .mockResolvedValueOnce({ rows: [] }) // schema_migrations table creation
+        .mockResolvedValueOnce({ rows: [] }) // check if 001 is pending -> pending!
+        .mockResolvedValueOnce({ rows: [{ 1: 1 }] }) // drafts table exists check
         .mockResolvedValueOnce({ rows: [{ count: 2 }] }) // preflight drafts finds 2 invalid
         .mockResolvedValueOnce({ rows: [{ count: 0 }] }); // preflight docs
 
@@ -94,7 +100,9 @@ describe('memory/store.mjs & migrations', () => {
     it('fails preflight check BEFORE schema.sql DDL starts if duplicate dated documents exist', async () => {
       const client = { query: clientQueryMock };
       clientQueryMock
-        .mockResolvedValueOnce({ rows: [] }) // schema_migrations check
+        .mockResolvedValueOnce({ rows: [] }) // schema_migrations table creation
+        .mockResolvedValueOnce({ rows: [] }) // check if 001 is pending -> pending!
+        .mockResolvedValueOnce({ rows: [{ 1: 1 }] }) // drafts table exists check
         .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // preflight drafts
         .mockResolvedValueOnce({ rows: [{ count: 3 }] }); // preflight docs finds 3 duplicate groups
 
@@ -104,6 +112,22 @@ describe('memory/store.mjs & migrations', () => {
       );
 
       expect(clientQueryMock).not.toHaveBeenCalledWith('BEGIN');
+    });
+
+    it('skips preflight checks when 001 migration has already been applied', async () => {
+      const client = { query: clientQueryMock };
+      clientQueryMock
+        .mockResolvedValueOnce({ rows: [] }) // schema_migrations table creation
+        .mockResolvedValueOnce({ rows: [{ version: '001_principal_ownership.sql' }] }) // check if 001 is pending -> applied!
+        .mockResolvedValueOnce(undefined) // BEGIN schema.sql
+        .mockResolvedValueOnce(undefined) // schema.sql
+        .mockResolvedValueOnce(undefined) // COMMIT schema.sql
+        .mockResolvedValueOnce({ rows: [{ version: '001_principal_ownership.sql' }] }); // 001 applied check in loop
+
+      const { runMigrations } = await import('../migrate.mjs');
+      await runMigrations({ client, embeddingDim: 1536 });
+
+      expect(clientQueryMock).not.toHaveBeenCalledWith(expect.stringContaining('FROM drafts d'));
     });
   });
 

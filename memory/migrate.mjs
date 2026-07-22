@@ -15,30 +15,36 @@ const { Pool } = pg;
 const ZERO_PADDED_REGEX = /^\d{3}_[a-z0-9_-]+\.sql$/i;
 
 export async function runPreflightChecks(client) {
-  const { rows: draftRows } = await client.query(`
-    SELECT COUNT(*)::int AS count
-      FROM drafts d
-      LEFT JOIN conversations c ON d.conversation_id = c.id
-     WHERE d.conversation_id IS NOT NULL
-       AND (c.id IS NULL OR d.business_id <> c.business_id)
+  const { rows: draftsTableRows } = await client.query(`
+    SELECT 1 FROM information_schema.tables WHERE table_name = 'drafts'
   `);
-  const invalidDraftsCount = draftRows[0]?.count || 0;
 
-  const { rows: docRows } = await client.query(`
-    SELECT COUNT(*)::int AS count FROM (
-      SELECT business_id, doc_type, doc_date
-        FROM documents
-       WHERE doc_date IS NOT NULL
-       GROUP BY business_id, doc_type, doc_date
-      HAVING COUNT(*) > 1
-    ) dupes
-  `);
-  const duplicateDocsCount = docRows[0]?.count || 0;
+  if (draftsTableRows.length > 0) {
+    const { rows: draftRows } = await client.query(`
+      SELECT COUNT(*)::int AS count
+        FROM drafts d
+        LEFT JOIN conversations c ON d.conversation_id = c.id
+       WHERE d.conversation_id IS NOT NULL
+         AND (c.id IS NULL OR d.business_id <> c.business_id)
+    `);
+    const invalidDraftsCount = draftRows[0]?.count || 0;
 
-  if (invalidDraftsCount > 0 || duplicateDocsCount > 0) {
-    throw new Error(
-      `Preflight check failed: found ${invalidDraftsCount} invalid draft(s) with mismatched conversation references and ${duplicateDocsCount} duplicate dated document group(s). Action required before migration 001.`
-    );
+    const { rows: docRows } = await client.query(`
+      SELECT COUNT(*)::int AS count FROM (
+        SELECT business_id, doc_type, doc_date
+          FROM documents
+         WHERE doc_date IS NOT NULL
+         GROUP BY business_id, doc_type, doc_date
+        HAVING COUNT(*) > 1
+      ) dupes
+    `);
+    const duplicateDocsCount = docRows[0]?.count || 0;
+
+    if (invalidDraftsCount > 0 || duplicateDocsCount > 0) {
+      throw new Error(
+        `Preflight check failed: found ${invalidDraftsCount} invalid draft(s) with mismatched conversation references and ${duplicateDocsCount} duplicate dated document group(s). Action required before migration 001.`
+      );
+    }
   }
 }
 
@@ -96,8 +102,18 @@ export async function runMigrations({ client, embeddingDim, migrationsDir = path
     }
   }
 
-  // Preflight checks run BEFORE any DDL statement (including schema.sql) to prevent unique index DDL failures on existing data
-  await runPreflightChecks(client);
+  // Discover if 001 is pending in schema_migrations
+  const migration001File = files.find((f) => f.startsWith('001_'));
+  let is001Pending = false;
+  if (migration001File) {
+    const { rows } = await client.query('SELECT version FROM schema_migrations WHERE version = $1', [migration001File]);
+    is001Pending = rows.length === 0;
+  }
+
+  // Run read-only preflight checks BEFORE any schema.sql DDL if 001 is pending
+  if (is001Pending) {
+    await runPreflightChecks(client);
+  }
 
   const baseSqlTemplate = readFileSync(schemaPath, 'utf8');
   const baseSql = baseSqlTemplate.replaceAll('__EMBEDDING_DIM__', String(embeddingDim));
