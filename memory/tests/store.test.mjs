@@ -137,10 +137,15 @@ describe('memory/store.mjs & migrations', () => {
       expect(sqlCalls.some((sql) => sql.includes('ALTER TABLE drafts DROP CONSTRAINT IF EXISTS drafts_conversation_fk'))).toBe(true);
       expect(sqlCalls.some((sql) => sql.includes('ADD CONSTRAINT conversations_id_business_actor_mode_key'))).toBe(true);
 
-      // Final call is the ledger write
-      expect(clientQueryMock).toHaveBeenLastCalledWith(
+      // The ledger records a fully applied migration before deferred base
+      // indexes run. This keeps legacy principal indexes after migration 001.
+      expect(clientQueryMock).toHaveBeenCalledWith(
         'INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING',
         ['001_principal_ownership.sql']
+      );
+      const calls = clientQueryMock.mock.calls.map(([sql]) => String(sql));
+      expect(calls.findIndex((sql) => sql.includes('INSERT INTO schema_migrations'))).toBeLessThan(
+        calls.findLastIndex((sql) => sql.includes('CREATE INDEX IF NOT EXISTS conversations_principal_idx'))
       );
     });
 
@@ -195,7 +200,7 @@ describe('memory/store.mjs & migrations', () => {
       clientQueryMock.mockResolvedValue({ rows: [] });
       await runMigrations({ client, embeddingDim: 1536 });
 
-      expect(clientQueryMock).toHaveBeenLastCalledWith(
+      expect(clientQueryMock).toHaveBeenCalledWith(
         'INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING',
         ['001_principal_ownership.sql']
       );

@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 /**
  * SQL State Machine Engine for non-mock migration rehearsal.
@@ -8,6 +11,8 @@ class InMemoryDatabaseHarness {
   constructor() {
     this.tables = new Map();
     this.ledger = new Set();
+    this.queries = [];
+    this.preMigrationPrincipalShape = null;
   }
 
   hasTable(tableName) {
@@ -21,14 +26,14 @@ class InMemoryDatabaseHarness {
     return this.tables.get(tableName);
   }
 
+  hasColumn(tableName, columnName) {
+    return this.hasTable(tableName) && this.getTable(tableName).columns.has(columnName);
+  }
+
   createTable(tableName, columns = [], constraints = []) {
     if (this.tables.has(tableName)) {
-      const existing = this.tables.get(tableName);
-      for (const col of columns) {
-        if (!existing.columns.has(col.name)) {
-          existing.columns.set(col.name, col);
-        }
-      }
+      // CREATE TABLE IF NOT EXISTS is a catalog no-op for an existing table.
+      // In particular, it must not add new principal columns to legacy tables.
       return;
     }
     this.tables.set(tableName, {
@@ -90,6 +95,7 @@ class InMemoryDatabaseHarness {
   }
 
   query(sql, params = []) {
+    this.queries.push(sql.trim());
     const statements = sql
       .split(';')
       .map((s) => s.trim())
@@ -170,8 +176,9 @@ class InMemoryDatabaseHarness {
       return { rows: [] };
     }
 
-    // 7. Base DDL / Schema DDL simulation
-    if (upper.includes('CONVERSATIONS')) {
+    // 7. Base table bootstrap simulation. CREATE TABLE IF NOT EXISTS must not
+    // evolve an existing legacy table; migration 001 owns that evolution.
+    if (/^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+CONVERSATIONS\b/i.test(text)) {
       this.createTable('conversations', [
         { name: 'id' },
         { name: 'business_id' },
@@ -180,7 +187,7 @@ class InMemoryDatabaseHarness {
         { name: 'title' },
       ]);
     }
-    if (upper.includes('MESSAGES')) {
+    if (/^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+MESSAGES\b/i.test(text)) {
       this.createTable('messages', [
         { name: 'id' },
         { name: 'conversation_id' },
@@ -188,7 +195,7 @@ class InMemoryDatabaseHarness {
         { name: 'content' },
       ]);
     }
-    if (upper.includes('NOTES')) {
+    if (/^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+NOTES\b/i.test(text)) {
       this.createTable('notes', [
         { name: 'id' },
         { name: 'business_id' },
@@ -196,7 +203,7 @@ class InMemoryDatabaseHarness {
         { name: 'content' },
       ]);
     }
-    if (upper.includes('DRAFTS')) {
+    if (/^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+DRAFTS\b/i.test(text)) {
       this.createTable('drafts', [
         { name: 'id' },
         { name: 'business_id' },
@@ -205,7 +212,7 @@ class InMemoryDatabaseHarness {
         { name: 'conversation_id' },
       ]);
     }
-    if (upper.includes('DOCUMENTS')) {
+    if (/^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+DOCUMENTS\b/i.test(text)) {
       this.createTable('documents', [
         { name: 'id' },
         { name: 'business_id' },
@@ -215,17 +222,40 @@ class InMemoryDatabaseHarness {
       ]);
     }
 
+    // This deliberately rejects the live failure mode: an index may not refer
+    // to a principal column until migration 001 has added it to a legacy table.
+    if (/^CREATE\s+(?:UNIQUE\s+|VECTOR\s+)?INDEX\b/i.test(text)) {
+      const indexedTable = text.match(/\bON\s+(conversations|drafts)\s*\(/i)?.[1]?.toLowerCase();
+      if (indexedTable && (!this.hasColumn(indexedTable, 'actor_id') || !this.hasColumn(indexedTable, 'access_mode'))) {
+        throw new Error(`cannot create principal index on legacy ${indexedTable} without principal columns`);
+      }
+    }
+
     // 8. Migration 001 execution simulation
-    if (upper.includes('CONVERSATIONS') && upper.includes('ACTOR_ID')) {
+    if (/^ALTER\s+TABLE\s+DRAFTS\s+DROP\s+CONSTRAINT\s+IF\s+EXISTS\s+DRAFTS_CONVERSATION_FK\b/i.test(text)) {
+      this.preMigrationPrincipalShape = {
+        conversations: {
+          actorId: this.hasColumn('conversations', 'actor_id'),
+          accessMode: this.hasColumn('conversations', 'access_mode'),
+        },
+        drafts: {
+          actorId: this.hasColumn('drafts', 'actor_id'),
+          accessMode: this.hasColumn('drafts', 'access_mode'),
+        },
+        notes: { createdBy: this.hasColumn('notes', 'created_by') },
+        documents: { createdBy: this.hasColumn('documents', 'created_by') },
+      };
+    }
+    if (/^ALTER\s+TABLE\s+CONVERSATIONS\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+ACTOR_ID\b/i.test(text)) {
       this.addColumn('conversations', 'actor_id', 'TEXT', false, 'legacy_demo');
     }
-    if (upper.includes('CONVERSATIONS') && upper.includes('ACCESS_MODE')) {
+    if (/^ALTER\s+TABLE\s+CONVERSATIONS\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+ACCESS_MODE\b/i.test(text)) {
       this.addColumn('conversations', 'access_mode', 'TEXT', false, 'legacy_demo');
     }
-    if (upper.includes('DRAFTS') && upper.includes('ACTOR_ID')) {
+    if (/^ALTER\s+TABLE\s+DRAFTS\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+ACTOR_ID\b/i.test(text)) {
       this.addColumn('drafts', 'actor_id', 'TEXT', false, 'legacy_demo');
     }
-    if (upper.includes('DRAFTS') && upper.includes('ACCESS_MODE')) {
+    if (/^ALTER\s+TABLE\s+DRAFTS\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+ACCESS_MODE\b/i.test(text)) {
       this.addColumn('drafts', 'access_mode', 'TEXT', false, 'legacy_demo');
     }
     if (upper.includes('UPDATE CONVERSATIONS')) {
@@ -256,10 +286,10 @@ class InMemoryDatabaseHarness {
     if (upper.includes('ADD CONSTRAINT DRAFTS_CONVERSATION_FK')) {
       this.addConstraint('drafts', 'drafts_conversation_fk', 'FOREIGN KEY', ['conversation_id']);
     }
-    if (upper.includes('NOTES') && upper.includes('CREATED_BY')) {
+    if (/^ALTER\s+TABLE\s+NOTES\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+CREATED_BY\b/i.test(text)) {
       this.addColumn('notes', 'created_by', 'TEXT', false, 'legacy_demo');
     }
-    if (upper.includes('DOCUMENTS') && upper.includes('CREATED_BY')) {
+    if (/^ALTER\s+TABLE\s+DOCUMENTS\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+CREATED_BY\b/i.test(text)) {
       this.addColumn('documents', 'created_by', 'TEXT', false, 'system');
     }
 
@@ -290,6 +320,30 @@ describe('Migration Rehearsal Harness', () => {
     expect(harness.hasTable('drafts')).toBe(true);
     expect(harness.hasTable('notes')).toBe(true);
     expect(harness.hasTable('documents')).toBe(true);
+  });
+
+  it('rejects a future non-index base statement before issuing any database query', async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), 'cafe-copilot-schema-'));
+    const schemaPath = path.join(tempDir, 'schema.sql');
+    writeFileSync(schemaPath, `
+      CREATE TABLE IF NOT EXISTS conversations (id UUID PRIMARY KEY);
+      ALTER TABLE conversations ADD COLUMN future_column TEXT;
+    `);
+
+    const client = {
+      query: (sql, params) => Promise.resolve(harness.query(sql, params)),
+    };
+    const { runMigrations } = await import('../migrate.mjs');
+
+    try {
+      await expect(runMigrations({ client, embeddingDim: 1536, schemaPath })).rejects.toThrow(
+        /Unsupported non-table base schema statement/
+      );
+      expect(harness.queries).toEqual([]);
+      expect(harness.hasTable('schema_migrations')).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('rehearses legacy migration backfill and constraint evolution', async () => {
@@ -326,6 +380,68 @@ describe('Migration Rehearsal Harness', () => {
     const note = harness.getTable('notes').rows[0];
     expect(note.created_by).toBe('legacy_demo');
 
+    expect(harness.ledger.has('001_principal_ownership.sql')).toBe(true);
+
+    expect(harness.preMigrationPrincipalShape).toEqual({
+      conversations: { actorId: false, accessMode: false },
+      drafts: { actorId: false, accessMode: false },
+      notes: { createdBy: false },
+      documents: { createdBy: false },
+    });
+
+    const addActorIndex = harness.queries.findIndex((sql) =>
+      /^ALTER\s+TABLE\s+CONVERSATIONS\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+ACTOR_ID\b/i.test(sql)
+    );
+    const principalIndex = harness.queries.findIndex((sql) =>
+      /^CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+CONVERSATIONS_PRINCIPAL_IDX\b/i.test(sql)
+    );
+    expect(addActorIndex).toBeGreaterThan(-1);
+    expect(principalIndex).toBeGreaterThan(addActorIndex);
+  });
+
+  it('recovers safely from a legacy catalog with an empty ledger left by the old ordering', async () => {
+    harness.createTable('schema_migrations', [{ name: 'version' }, { name: 'applied_at' }]);
+    harness.createTable('conversations', [{ name: 'id' }, { name: 'business_id' }, { name: 'updated_at' }]);
+    harness.createTable('drafts', [{ name: 'id' }, { name: 'business_id' }, { name: 'conversation_id' }, { name: 'created_at' }]);
+    harness.createTable('notes', [{ name: 'id' }, { name: 'business_id' }, { name: 'created_at' }]);
+    harness.createTable('documents', [{ name: 'id' }, { name: 'business_id' }, { name: 'doc_type' }, { name: 'doc_date' }]);
+
+    const client = { query: (sql, params) => Promise.resolve(harness.query(sql, params)) };
+    const { runMigrations } = await import('../migrate.mjs');
+
+    await runMigrations({ client, embeddingDim: 1536 });
+
+    expect(harness.ledger.has('001_principal_ownership.sql')).toBe(true);
+    expect(harness.hasColumn('conversations', 'actor_id')).toBe(true);
+    expect(harness.hasColumn('conversations', 'access_mode')).toBe(true);
+    expect(harness.hasColumn('drafts', 'actor_id')).toBe(true);
+    expect(harness.hasColumn('drafts', 'access_mode')).toBe(true);
+    expect(harness.preMigrationPrincipalShape).toEqual({
+      conversations: { actorId: false, accessMode: false },
+      drafts: { actorId: false, accessMode: false },
+      notes: { createdBy: false },
+      documents: { createdBy: false },
+    });
+  });
+
+  it('accepts an already-migrated catalog without rerunning migration 001', async () => {
+    harness.createTable('schema_migrations', [{ name: 'version' }, { name: 'applied_at' }]);
+    harness.ledger.add('001_principal_ownership.sql');
+    harness.createTable('conversations', [
+      { name: 'id' }, { name: 'business_id' }, { name: 'actor_id' }, { name: 'access_mode' }, { name: 'updated_at' },
+    ]);
+    harness.createTable('drafts', [
+      { name: 'id' }, { name: 'business_id' }, { name: 'actor_id' }, { name: 'access_mode' }, { name: 'created_at' },
+    ]);
+    harness.createTable('notes', [{ name: 'id' }, { name: 'business_id' }, { name: 'created_by' }, { name: 'created_at' }]);
+    harness.createTable('documents', [{ name: 'id' }, { name: 'business_id' }, { name: 'created_by' }, { name: 'doc_type' }, { name: 'doc_date' }]);
+
+    const client = { query: (sql, params) => Promise.resolve(harness.query(sql, params)) };
+    const { runMigrations } = await import('../migrate.mjs');
+
+    await runMigrations({ client, embeddingDim: 1536 });
+
+    expect(harness.queries.some((sql) => /^ALTER\s+TABLE\s+CONVERSATIONS\s+ADD\s+COLUMN\b/i.test(sql))).toBe(false);
     expect(harness.ledger.has('001_principal_ownership.sql')).toBe(true);
   });
 

@@ -122,6 +122,32 @@ export function renderSchema({ embeddingDim, schemaPath = path.join(REPO_ROOT, '
   return `${baseSql}\n${migrationSql}`;
 }
 
+function isCreateTableStatement(statement) {
+  return /^CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\b/i.test(statement.trim());
+}
+
+function isAllowedDeferredBaseStatement(statement) {
+  return /^CREATE\s+(?:UNIQUE\s+|VECTOR\s+)?INDEX\s+IF\s+NOT\s+EXISTS\b/i.test(statement.trim());
+}
+
+function classifyBaseSchema({ embeddingDim, schemaPath }) {
+  const baseSqlTemplate = readFileSync(schemaPath, 'utf8');
+  const baseSql = baseSqlTemplate.replaceAll('__EMBEDDING_DIM__', String(embeddingDim));
+  const baseStatements = splitSqlStatements(baseSql);
+  const bootstrapStatements = baseStatements.filter(isCreateTableStatement);
+  const deferredBaseStatements = baseStatements.filter((stmt) => !isCreateTableStatement(stmt));
+
+  for (const stmt of deferredBaseStatements) {
+    if (!isAllowedDeferredBaseStatement(stmt)) {
+      throw new Error(
+        `Unsupported non-table base schema statement. Only idempotent CREATE INDEX IF NOT EXISTS statements may be deferred: ${stmt.slice(0, 80)}`
+      );
+    }
+  }
+
+  return { bootstrapStatements, deferredBaseStatements };
+}
+
 export async function runMigrations({ client, embeddingDim, migrationsDir = path.join(REPO_ROOT, 'memory', 'migrations'), schemaPath = path.join(REPO_ROOT, 'memory', 'schema.sql') } = {}) {
   if (!embeddingDim) {
     throw new Error('EMBEDDING_DIM is not configured — run find-embedding-model first');
@@ -141,6 +167,14 @@ export async function runMigrations({ client, embeddingDim, migrationsDir = path
       throw new Error(`Invalid migration filename format: "${file}". Filenames must be zero-padded 3-digit numbers like "001_name.sql".`);
     }
   }
+
+  // Validate the split before issuing even a read query. The runner can only
+  // defer idempotent indexes; a future schema change must be deliberately
+  // placed in a numbered migration rather than silently reordered.
+  const { bootstrapStatements, deferredBaseStatements } = classifyBaseSchema({
+    embeddingDim,
+    schemaPath,
+  });
 
   // Discover if 001 is pending with ZERO SQL MUTATION
   const migration001File = files.find((f) => f.startsWith('001_'));
@@ -162,11 +196,15 @@ export async function runMigrations({ client, embeddingDim, migrationsDir = path
     );
   `);
 
-  // Execute base schema.sql as individual statements
-  const baseSqlTemplate = readFileSync(schemaPath, 'utf8');
-  const baseSql = baseSqlTemplate.replaceAll('__EMBEDDING_DIM__', String(embeddingDim));
-  const baseStatements = splitSqlStatements(baseSql);
-  for (const stmt of baseStatements) {
+  // Bootstrap tables before migrations, but defer base indexes until afterwards.
+  //
+  // `CREATE TABLE IF NOT EXISTS` does not evolve an existing table. Running the
+  // complete current schema against an old installation would therefore try to
+  // create an actor_id/access_mode index before migration 001 adds those
+  // columns. Keeping table bootstrapping separate lets 001 safely evolve both
+  // fresh and legacy catalog shapes. This also makes a retry safe when a prior
+  // failed run created an empty schema_migrations ledger.
+  for (const stmt of bootstrapStatements) {
     await client.query(stmt);
   }
 
@@ -190,6 +228,12 @@ export async function runMigrations({ client, embeddingDim, migrationsDir = path
       'INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING',
       [file]
     );
+  }
+
+  // Indexes are deliberately last: principal-aware ones are valid only after
+  // migration 001 has added the corresponding columns to legacy tables.
+  for (const stmt of deferredBaseStatements) {
+    await client.query(stmt);
   }
 }
 
