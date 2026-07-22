@@ -221,9 +221,11 @@ export async function handler({
     }
     activePrincipal = principal;
   } else {
-    const activeBusinessId = businessId || DEFAULT_BUSINESS_ID;
+    if (businessId && businessId !== DEFAULT_BUSINESS_ID) {
+      throw new ValidationError('businessId parameter requires a valid principal object');
+    }
     activePrincipal = {
-      businessId: activeBusinessId,
+      businessId: DEFAULT_BUSINESS_ID,
       actorId: 'legacy_demo',
       accessMode: 'legacy_demo',
     };

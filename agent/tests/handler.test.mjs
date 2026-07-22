@@ -189,6 +189,17 @@ describe('handler', () => {
       expect(sendMock).not.toHaveBeenCalled();
     });
 
+    it('rejects a custom businessId parameter when principal is omitted', async () => {
+      const { bufferedHandler } = await import('../handler.mjs');
+
+      await expect(
+        bufferedHandler({ message: 'hi', businessId: 'custom-other-cafe' })
+      ).rejects.toThrow('businessId parameter requires a valid principal object');
+
+      expect(sendMock).not.toHaveBeenCalled();
+      expect(createConversationMock).not.toHaveBeenCalled();
+    });
+
     it('runs one tool call then returns the final answer, without persisting the tool round-trip', async () => {
       sendMock
         .mockResolvedValueOnce(

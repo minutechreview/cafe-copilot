@@ -190,20 +190,16 @@ function validateDraftItems(items) {
 }
 
 function resolvePrincipal(ctx) {
-  if (ctx?.principal) {
-    if (!ctx.principal.businessId || !ctx.principal.actorId || !ctx.principal.accessMode) {
-      throw new Error('invalid principal shape in tool context');
-    }
-    if (ctx.businessId && ctx.businessId !== ctx.principal.businessId) {
-      throw new Error('businessId mismatch in tool context');
-    }
-    return ctx.principal;
+  if (!ctx?.principal) {
+    throw new Error('ctx.principal is required');
   }
-  return {
-    businessId: ctx?.businessId || 'demo-cafe',
-    actorId: 'legacy_demo',
-    accessMode: 'legacy_demo',
-  };
+  if (!ctx.principal.businessId || !ctx.principal.actorId || !ctx.principal.accessMode) {
+    throw new Error('invalid principal shape in tool context');
+  }
+  if (ctx.businessId && ctx.businessId !== ctx.principal.businessId) {
+    throw new Error('businessId mismatch in tool context');
+  }
+  return ctx.principal;
 }
 
 async function runGetDaySummary(input, ctx) {

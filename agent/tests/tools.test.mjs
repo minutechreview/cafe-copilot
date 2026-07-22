@@ -20,7 +20,11 @@ vi.mock('../../memory/store.mjs', () => ({
   searchDocuments: searchDocumentsMock,
 }));
 
-const CTX = { businessId: 'biz-1', conversationId: 'conv-1' };
+const CTX = {
+  businessId: 'biz-1',
+  conversationId: 'conv-1',
+  principal: { businessId: 'biz-1', actorId: 'legacy_demo', accessMode: 'legacy_demo' },
+};
 
 /**
  * Builds a chainable mock mimicking Supabase's PostgrestFilterBuilder: every filter method
@@ -406,6 +410,14 @@ describe('agent/tools.mjs', () => {
         const { executeTool } = await import('../tools.mjs');
         await expect(executeTool('search_memory', { query: 'test' }, null)).rejects.toThrow(
           'tool context is required'
+        );
+      });
+
+      it('rejects tool execution when ctx.principal is missing', async () => {
+        const { executeTool } = await import('../tools.mjs');
+        const noPrincipalCtx = { businessId: 'demo-cafe' };
+        await expect(executeTool('search_memory', { query: 'test' }, noPrincipalCtx)).rejects.toThrow(
+          'ctx.principal is required'
         );
       });
 
