@@ -17,7 +17,7 @@ export function assertStagingUrl(url) {
 
   let parsed;
   try {
-    parsed = new URL(url.trim());
+    parsed = new URL(url);
   } catch {
     throw new Error(`SAFETY ABORT: staging ${STAGING_HOSTNAME} required; received invalid/missing URL.`);
   }
@@ -58,29 +58,31 @@ async function authenticateDemo() {
     throw new Error('Demo credentials missing (DEMO_OWNER_EMAIL / DEMO_OWNER_PASSWORD environment variables required)');
   }
 
+  let supabase;
   try {
-    const supabase = createClient(url.trim(), anonKey.trim(), {
+    supabase = createClient(url, anonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password: password.trim(),
+  } catch {
+    throw new Error('POS staging client creation failed');
+  }
+
+  let result;
+  try {
+    result = await supabase.auth.signInWithPassword({
+      email,
+      password,
     });
-    if (error) {
-      throw new Error('POS staging authentication failed');
-    }
-    return supabase;
-  } catch (err) {
-    if (err instanceof Error && (
-      err.message === 'POS staging authentication failed' ||
-      err.message.startsWith('SAFETY ABORT') ||
-      err.message.includes('not configured') ||
-      err.message.includes('Demo credentials missing')
-    )) {
-      throw err;
-    }
+  } catch {
     throw new Error('POS staging authentication failed');
   }
+
+  const { error } = result || {};
+  if (error) {
+    throw new Error('POS staging authentication failed');
+  }
+
+  return supabase;
 }
 
 /**
@@ -109,7 +111,6 @@ export function getAuthenticatedPosClient(accessToken) {
     throw new Error('accessToken is required for authenticated POS client');
   }
 
-  const token = accessToken.trim();
   const url = process.env.POS_SUPABASE_URL;
   const anonKey = process.env.POS_SUPABASE_ANON_KEY;
   assertStagingUrl(url);
@@ -119,9 +120,9 @@ export function getAuthenticatedPosClient(accessToken) {
   }
 
   try {
-    return createClient(url.trim(), anonKey.trim(), {
+    return createClient(url, anonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
-      global: { headers: { Authorization: `Bearer ${token}` } },
+      global: { headers: { Authorization: `Bearer ${accessToken}` } },
     });
   } catch {
     throw new Error('Failed to initialize authenticated POS client');

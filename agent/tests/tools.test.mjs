@@ -285,6 +285,9 @@ describe('agent/tools.mjs', () => {
         await expect(
           executeTool('get_staff_performance', { start_date: '2026-07-07', end_date: '2026-07-01' }, CTX)
         ).rejects.toThrow('end_date must not be before start_date');
+        await expect(
+          executeTool('get_staff_performance', { start_date: 'nope', end_date: '2026-07-01' }, CTX)
+        ).rejects.toThrow('start_date must be in YYYY-MM-DD format');
       });
     });
 
@@ -361,6 +364,25 @@ describe('agent/tools.mjs', () => {
             ],
           },
         });
+      });
+
+      it('falls back to raw reason code, "Unknown item", and no logged_by field when data is sparse', async () => {
+        const wasteQuery = makeQuery({
+          data: [{ qty: 1, reason_code: 'mystery', logged_by: null, timestamp: '2026-07-02T12:00:00.000Z', menu_items: null }],
+          error: null,
+        });
+        const supabase = makeSupabase({ businesses: BUSINESS_QUERY(), waste_comp_logs: wasteQuery });
+        const { executeTool } = await import('../tools.mjs');
+
+        const result = await executeTool(
+          'get_waste_log',
+          { start_date: '2026-07-01', end_date: '2026-07-07' },
+          { ...CTX, posClient: supabase }
+        );
+
+        expect(result.entries).toEqual([
+          { date: '2026-07-02', item: 'Unknown item', quantity: 1, reason: 'mystery', reason_code: 'mystery', approx_value: 0 },
+        ]);
       });
 
       it('returns a no_activity marker for an empty range', async () => {

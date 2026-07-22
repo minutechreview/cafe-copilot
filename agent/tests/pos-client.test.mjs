@@ -126,10 +126,47 @@ describe('agent/pos-client.mjs', () => {
       expect(createClientMock).not.toHaveBeenCalled();
     });
 
-    it('sanitizes sign-in failures and never propagates credential canary strings', async () => {
-      const credentialCanary = 'SUPER_SECRET_CANARY_PASS_999';
-      process.env.DEMO_OWNER_PASSWORD = credentialCanary;
-      signInWithPasswordMock.mockRejectedValueOnce(new Error(`Upstream auth failed for ${credentialCanary}`));
+    it('sanitizes client factory exceptions throwing SAFETY ABORT <credential>', async () => {
+      const credentialCanary = 'CANARY_FACTORY_SAFETY_ABORT_123';
+      createClientMock.mockImplementationOnce(() => {
+        throw new Error(`SAFETY ABORT ${credentialCanary}`);
+      });
+
+      const { getDemoPosClient } = await import('../pos-client.mjs');
+
+      try {
+        await getDemoPosClient();
+        expect.fail('Should have thrown error');
+      } catch (err) {
+        expect(err.message).toBe('POS staging client creation failed');
+        expect(err.message).not.toContain(credentialCanary);
+        expect(Object.values(err)).not.toContain(credentialCanary);
+        expect(JSON.stringify(err)).not.toContain(credentialCanary);
+      }
+    });
+
+    it('sanitizes sign-in rejections throwing not configured <credential>', async () => {
+      const credentialCanary = 'CANARY_REJECT_NOT_CONFIGURED_456';
+      signInWithPasswordMock.mockRejectedValueOnce(new Error(`not configured ${credentialCanary}`));
+
+      const { getDemoPosClient } = await import('../pos-client.mjs');
+
+      try {
+        await getDemoPosClient();
+        expect.fail('Should have thrown error');
+      } catch (err) {
+        expect(err.message).toBe('POS staging authentication failed');
+        expect(err.message).not.toContain(credentialCanary);
+        expect(Object.values(err)).not.toContain(credentialCanary);
+        expect(JSON.stringify(err)).not.toContain(credentialCanary);
+      }
+    });
+
+    it('sanitizes sign-in errors returning { error } containing credential text', async () => {
+      const credentialCanary = 'CANARY_RETURNED_ERROR_789';
+      signInWithPasswordMock.mockResolvedValueOnce({
+        error: { message: `Invalid password containing ${credentialCanary}` },
+      });
 
       const { getDemoPosClient } = await import('../pos-client.mjs');
 
