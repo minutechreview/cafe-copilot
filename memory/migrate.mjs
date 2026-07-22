@@ -14,6 +14,21 @@ loadEnv({ path: path.join(REPO_ROOT, '.env.local') });
 const { Pool } = pg;
 const ZERO_PADDED_REGEX = /^\d{3}_[a-z0-9_-]+\.sql$/i;
 
+export async function isMigrationPending(client, version) {
+  const { rows } = await client.query(`SELECT to_regclass('public.schema_migrations') AS rel`);
+  const hasLedger = Boolean(rows[0]?.rel);
+
+  if (!hasLedger) {
+    return true;
+  }
+
+  const { rows: versionRows } = await client.query(
+    'SELECT version FROM schema_migrations WHERE version = $1',
+    [version]
+  );
+  return versionRows.length === 0;
+}
+
 export async function runPreflightChecks(client) {
   const { rows: draftsExists } = await client.query(`SELECT to_regclass('public.drafts') AS rel`);
   const { rows: docsExists } = await client.query(`SELECT to_regclass('public.documents') AS rel`);
@@ -90,13 +105,6 @@ export async function runMigrations({ client, embeddingDim, migrationsDir = path
     throw new Error('EMBEDDING_DIM is not configured — run find-embedding-model first');
   }
 
-  await client.query(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      version TEXT PRIMARY KEY,
-      applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `);
-
   let files;
   try {
     files = readdirSync(migrationsDir)
@@ -112,28 +120,29 @@ export async function runMigrations({ client, embeddingDim, migrationsDir = path
     }
   }
 
+  // Discover if 001 is pending with ZERO SQL MUTATION
   const migration001File = files.find((f) => f.startsWith('001_'));
   let is001Pending = false;
   if (migration001File) {
-    const { rows } = await client.query('SELECT version FROM schema_migrations WHERE version = $1', [migration001File]);
-    is001Pending = rows.length === 0;
+    is001Pending = await isMigrationPending(client, migration001File);
   }
 
+  // Run read-only preflight checks BEFORE any DDL or mutation statement
   if (is001Pending) {
     await runPreflightChecks(client);
   }
 
+  // DDL execution (idempotent, CockroachDB-safe without wrapping multi-statement DDL+DML transactions)
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+
   const baseSqlTemplate = readFileSync(schemaPath, 'utf8');
   const baseSql = baseSqlTemplate.replaceAll('__EMBEDDING_DIM__', String(embeddingDim));
-
-  await client.query('BEGIN');
-  try {
-    await client.query(baseSql);
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  }
+  await client.query(baseSql);
 
   for (const file of files) {
     const { rows } = await client.query('SELECT version FROM schema_migrations WHERE version = $1', [file]);
@@ -144,15 +153,11 @@ export async function runMigrations({ client, embeddingDim, migrationsDir = path
     const migrationContent = readFileSync(path.join(migrationsDir, file), 'utf8');
     const migrationSql = migrationContent.replaceAll('__EMBEDDING_DIM__', String(embeddingDim));
 
-    await client.query('BEGIN');
-    try {
-      await client.query(migrationSql);
-      await client.query('INSERT INTO schema_migrations (version) VALUES ($1)', [file]);
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw new Error(`Migration ${file} failed: ${err?.message ?? err}`);
-    }
+    await client.query(migrationSql);
+    await client.query(
+      'INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING',
+      [file]
+    );
   }
 }
 

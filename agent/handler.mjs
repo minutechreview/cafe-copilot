@@ -34,10 +34,6 @@ import { toolConfig, executeTool } from './tools.mjs';
 // server process) reuses the same client/connection instead of paying setup cost per call.
 const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION });
 
-// C2 had no auth/business-selection layer yet; every conversation belongs to the single
-// seeded demo café until real multi-business auth lands. DEMO_BUSINESS_ID is the same id
-// used for both the POS staging lookup (get_day_summary) and the CockroachDB memory rows
-// (notes/drafts/documents), so a single env var keeps both sides pointed at one business.
 const DEFAULT_BUSINESS_ID = process.env.DEMO_BUSINESS_ID || 'demo-cafe';
 const HISTORY_LIMIT = 12;
 const MAX_ITERATIONS = 6;
@@ -100,7 +96,6 @@ function toConverseMessages(history) {
   return history.map((entry) => ({ role: entry.role, content: [{ text: entry.content }] }));
 }
 
-/** Builds the {toolResult} content blocks for every toolUse block in an assistant message. */
 async function resolveToolUses(content, ctx) {
   const toolUseBlocks = (content ?? []).filter((block) => block.toolUse);
   const results = [];
@@ -126,7 +121,6 @@ async function resolveToolUses(content, ctx) {
   return { results, toolUseBlocks };
 }
 
-/** Pulls the payload out of a successful draft_purchase_order tool result, if one occurred. */
 function findDraft(toolUseBlocks, toolResults) {
   const draftIndex = toolUseBlocks.findIndex((block) => block.toolUse.name === 'draft_purchase_order');
   if (draftIndex === -1) return undefined;
@@ -135,15 +129,6 @@ function findDraft(toolUseBlocks, toolResults) {
   return result.content?.[0]?.json;
 }
 
-/**
- * Consumes a ConverseStream response's async-iterable `stream`, forwarding text deltas to
- * onEvent as they arrive and buffering toolUse input fragments (which come as fragments of a
- * JSON-encoded string, per Bedrock's streaming contract) until the block closes. Reconstructs
- * the same {role, content} message shape the non-streaming Converse API returns, so the rest
- * of the loop (tool dispatch, history for the next iteration) doesn't need to know streaming
- * happened at all.
- * @returns {Promise<{ stopReason: string, message: { role: string, content: object[] } }>}
- */
 async function consumeStream(stream, onEvent) {
   const blocks = [];
   let stopReason;
@@ -160,8 +145,6 @@ async function consumeStream(stream, onEvent) {
       if (typeof delta?.text === 'string') {
         block.kind = 'text';
         block.text = (block.text ?? '') + delta.text;
-        // Forwarded immediately, including narration the model emits before a tool call —
-        // that's good UX and matches the streaming contract this function exists to provide.
         onEvent({ type: 'delta', text: delta.text });
       } else if (typeof delta?.toolUse?.input === 'string') {
         block.kind = 'toolUse';
@@ -170,7 +153,6 @@ async function consumeStream(stream, onEvent) {
     } else if (event.messageStop) {
       stopReason = event.messageStop.stopReason;
     }
-    // contentBlockStop and metadata events carry nothing this loop needs.
   }
 
   const content = blocks
@@ -195,11 +177,6 @@ async function consumeStream(stream, onEvent) {
   return { stopReason, message: { role: 'assistant', content } };
 }
 
-/**
- * Runs the send → (tool_use? execute → repeat) → final-answer loop against Bedrock's
- * ConverseStream API, forwarding text deltas and draft events to onEvent as they happen.
- * @returns {Promise<{ reply: string, draft?: object }>}
- */
 async function runAgentLoopStreaming({ systemPrompt, modelId, initialMessages, ctx, onEvent }) {
   let messages = initialMessages;
   let draft;
@@ -212,9 +189,6 @@ async function runAgentLoopStreaming({ systemPrompt, modelId, initialMessages, c
         system: [{ text: systemPrompt }],
         messages,
         inferenceConfig: { maxTokens: MAX_TOKENS },
-        // Tools are withheld on the last allowed iteration so the model is forced to answer
-        // in text instead of asking for yet another tool call — this is what makes the cap
-        // actually terminate the loop with an answer rather than an error.
         ...(isFinalIteration ? {} : { toolConfig }),
       })
     );
@@ -226,8 +200,6 @@ async function runAgentLoopStreaming({ systemPrompt, modelId, initialMessages, c
     }
 
     if (isFinalIteration) {
-      // Defensive only: toolConfig was withheld this round, so a well-behaved model cannot
-      // reach this branch. Fail loudly rather than silently dropping the turn.
       throw new Error('Agent requested a tool after the iteration cap was reached');
     }
 
@@ -241,17 +213,23 @@ async function runAgentLoopStreaming({ systemPrompt, modelId, initialMessages, c
     messages = [...messages, assistantMessage, { role: 'user', content: results }];
   }
 
-  // Unreachable given the loop always returns or throws by the final iteration, but keeps
-  // the function's return type honest if MAX_ITERATIONS is ever set to 0.
   throw new Error('Agent did not produce a final answer');
 }
 
 /**
- * @param {{ message: string, conversationId?: string, businessId?: string, onEvent?: (event: object) => void }} input
- * @returns {Promise<void>} resolves once a 'done' or 'error' event has been emitted (or
- *   rejects synchronously for input/config validation that happens before any Bedrock call).
+ * @param {{ message: string, conversationId?: string, businessId?: string, principal?: object, actorId?: string, accessMode?: string, posClient?: object, onEvent?: (event: object) => void }} input
+ * @returns {Promise<void>}
  */
-export async function handler({ message, conversationId, businessId, onEvent = () => {} } = {}) {
+export async function handler({
+  message,
+  conversationId,
+  businessId,
+  principal,
+  actorId,
+  accessMode,
+  posClient,
+  onEvent = () => {},
+} = {}) {
   if (typeof message !== 'string' || !message.trim()) {
     throw new ValidationError('message is required');
   }
@@ -261,15 +239,20 @@ export async function handler({ message, conversationId, businessId, onEvent = (
     throw new Error('BEDROCK_MODEL_ID is not configured');
   }
 
-  const activeBusinessId = businessId || DEFAULT_BUSINESS_ID;
+  const activeBusinessId = businessId || principal?.businessId || DEFAULT_BUSINESS_ID;
+  const activePrincipal = principal || {
+    businessId: activeBusinessId,
+    actorId: actorId || 'legacy_demo',
+    accessMode: accessMode || 'legacy_demo',
+  };
 
   let activeConversationId = conversationId;
   let history = [];
   try {
     if (!activeConversationId) {
-      activeConversationId = await createConversation({ businessId: activeBusinessId });
+      activeConversationId = await createConversation(activePrincipal, { title: 'chat conversation' });
     } else {
-      history = await getRecentMessages(activeConversationId, HISTORY_LIMIT);
+      history = await getRecentMessages(activePrincipal, activeConversationId, HISTORY_LIMIT);
     }
   } catch (err) {
     console.error('[agent] memory lookup failed', {
@@ -283,7 +266,12 @@ export async function handler({ message, conversationId, businessId, onEvent = (
   const todayIso = new Date().toISOString().slice(0, 10);
   const systemPrompt = buildSystemPrompt(todayIso);
   const initialMessages = [...toConverseMessages(history), { role: 'user', content: [{ text: message }] }];
-  const ctx = { businessId: activeBusinessId, conversationId: activeConversationId };
+  const ctx = {
+    businessId: activeBusinessId,
+    conversationId: activeConversationId,
+    principal: activePrincipal,
+    posClient,
+  };
 
   let loopResult;
   try {
@@ -307,11 +295,9 @@ export async function handler({ message, conversationId, businessId, onEvent = (
   }
 
   try {
-    await appendMessage({ conversationId: activeConversationId, role: 'user', content: message });
-    await appendMessage({ conversationId: activeConversationId, role: 'assistant', content: reply });
+    await appendMessage(activePrincipal, { conversationId: activeConversationId, role: 'user', content: message });
+    await appendMessage(activePrincipal, { conversationId: activeConversationId, role: 'assistant', content: reply });
   } catch (err) {
-    // The user already has their answer — a persistence hiccup shouldn't turn into a
-    // failed request, but it does mean this turn won't be remembered, so log it loudly.
     console.error('[agent] failed to persist conversation turn', {
       conversationId: activeConversationId,
       error: err?.message ?? String(err),
@@ -321,15 +307,6 @@ export async function handler({ message, conversationId, businessId, onEvent = (
   onEvent({ type: 'done', conversationId: activeConversationId, reply });
 }
 
-/**
- * Non-streaming façade over `handler`, for callers that want one buffered result instead of
- * an event stream: the JSON-compat HTTP response path and tests. Collects the event stream
- * and returns the same {reply, conversationId, draft?} shape the pre-streaming handler used
- * to return directly, or throws (preserving statusCode on validation errors) if the turn
- * produced an error event instead of a 'done' event.
- * @param {{ message: string, conversationId?: string, businessId?: string }} input
- * @returns {Promise<{ reply: string, conversationId: string, draft?: object }>}
- */
 export async function bufferedHandler(input) {
   let draftPayload;
   let doneResult;
