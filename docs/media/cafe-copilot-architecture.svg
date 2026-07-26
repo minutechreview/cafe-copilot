@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101b2d"/>
+      <stop offset="1" stop-color="#162b3c"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity=".25"/>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0 0L12 6L0 12Z" fill="#6ee7d8"/>
+    </marker>
+    <style>
+      .title{font:700 52px system-ui,sans-serif;fill:#f8fafc}
+      .subtitle{font:400 24px system-ui,sans-serif;fill:#b8c9d9}
+      .box{fill:#20394d;stroke:#4d7185;stroke-width:2}
+      .accent{fill:#173f43;stroke:#45c9b8;stroke-width:3}
+      .aws{fill:#49351f;stroke:#f59e42;stroke-width:3}
+      .crdb{fill:#35253f;stroke:#c084fc;stroke-width:3}
+      .label{font:700 26px system-ui,sans-serif;fill:#fff;text-anchor:middle}
+      .detail{font:400 19px system-ui,sans-serif;fill:#cbd5e1;text-anchor:middle}
+      .flow{fill:none;stroke:#6ee7d8;stroke-width:5;marker-end:url(#arrow)}
+      .caption{font:600 18px system-ui,sans-serif;fill:#91f0e4;text-anchor:middle}
+    </style>
+  </defs>
+  <rect width="1600" height="900" rx="36" fill="url(#bg)"/>
+  <text x="90" y="105" class="title">Café Copilot</text>
+  <text x="90" y="150" class="subtitle">Authenticated POS intelligence with grounded answers and durable memory</text>
+
+  <g filter="url(#shadow)">
+    <rect x="90" y="305" width="320" height="210" rx="28" class="accent"/>
+    <text x="250" y="375" class="label">Project POS</text>
+    <text x="250" y="414" class="detail">Owner / manager session</text>
+    <text x="250" y="448" class="detail">Floating Copilot widget</text>
+    <text x="250" y="482" class="detail">Supabase JWT + business</text>
+
+    <rect x="640" y="275" width="330" height="270" rx="28" class="aws"/>
+    <text x="805" y="350" class="label">AWS Lambda</text>
+    <text x="805" y="389" class="detail">Streaming agent loop</text>
+    <text x="805" y="423" class="detail">Amazon Bedrock Claude</text>
+    <text x="805" y="457" class="detail">Titan embeddings</text>
+    <text x="805" y="491" class="detail">Read-only POS tools</text>
+
+    <rect x="1190" y="210" width="320" height="210" rx="28" class="box"/>
+    <text x="1350" y="280" class="label">POS Supabase</text>
+    <text x="1350" y="319" class="detail">Orders · tills · staff</text>
+    <text x="1350" y="353" class="detail">Waste · memberships</text>
+    <text x="1350" y="387" class="detail">Source of truth</text>
+
+    <rect x="1190" y="535" width="320" height="210" rx="28" class="crdb"/>
+    <text x="1350" y="605" class="label">CockroachDB</text>
+    <text x="1350" y="644" class="detail">Conversations · notes</text>
+    <text x="1350" y="678" class="detail">Reviewable drafts</text>
+    <text x="1350" y="712" class="detail">Vector-indexed summaries</text>
+  </g>
+
+  <path d="M410 410H625" class="flow"/>
+  <text x="520" y="392" class="caption">SSE chat</text>
+  <path d="M970 350C1060 350 1070 315 1175 315" class="flow"/>
+  <text x="1075" y="290" class="caption">live SELECTs</text>
+  <path d="M970 470C1060 470 1070 640 1175 640" class="flow"/>
+  <text x="1075" y="555" class="caption">memory + vectors</text>
+
+  <rect x="90" y="735" width="880" height="82" rx="22" fill="#142638" stroke="#35556b"/>
+  <text x="530" y="770" class="detail">Every business number comes from the POS.</text>
+  <text x="530" y="802" class="detail">CockroachDB remembers context; it never invents arithmetic.</text>
+</svg>

@@ -75,9 +75,11 @@ attestation, an account action, or media only you can record and host.
 
 ### Screenshots and media
 
-- [ ] Capture and upload screenshots for the Devpost gallery (e.g. the chat widget mid-answer,
-      the purchase-order draft card, the architecture diagram).
-- [ ] Confirm image sizes/formats meet Devpost's gallery requirements.
+- [x] Prepared `docs/media/copilot-refund-memory.jpg`, captured from the verified authenticated
+      staging widget, plus `docs/media/cafe-copilot-architecture.svg` and its
+      gallery-ready PNG export.
+- [ ] Upload the selected media to the Devpost gallery and confirm its current image
+      size/format requirements.
 
 ### Repository
 
