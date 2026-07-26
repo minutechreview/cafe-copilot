@@ -24,10 +24,18 @@ const ref = (() => { try { return new URL(url).hostname.split('.')[0]; } catch {
 if (ref !== EXPECTED_REF) throw new Error(`SAFETY ABORT: POS_SUPABASE_URL must target staging ${EXPECTED_REF}; received ${ref || 'an invalid/missing URL'}.`);
 if (!key) throw new Error('POS_SUPABASE_ANON_KEY is required.');
 
-const email = String(args.email || process.env.DEMO_OWNER_EMAIL || 'cafe-copilot-demo@example.com');
-const password = String(args.password || process.env.DEMO_OWNER_PASSWORD || 'CafeCopilot-Demo-2026!');
-const pin = String(args.pin || process.env.DEMO_OWNER_PIN || '2468');
-if (!/^\d{4}$/.test(pin)) throw new Error('Owner PIN must be exactly four digits.');
+const email = String(args.email || process.env.DEMO_OWNER_EMAIL || '');
+const password = String(args.password || process.env.DEMO_OWNER_PASSWORD || '');
+if (!email || !password) {
+  throw new Error('Demo owner email and password are required via flags or environment variables.');
+}
+const pin = String(args.pin || process.env.DEMO_OWNER_PIN || '');
+const managerPin = String(process.env.DEMO_MANAGER_PIN || '');
+const staffPin1 = String(process.env.DEMO_STAFF_PIN_1 || '');
+const staffPin2 = String(process.env.DEMO_STAFF_PIN_2 || '');
+if (![pin, managerPin, staffPin1, staffPin2].every((value) => /^\d{4}$/.test(value))) {
+  throw new Error('DEMO_OWNER_PIN, DEMO_MANAGER_PIN, DEMO_STAFF_PIN_1 and DEMO_STAFF_PIN_2 must each be four digits.');
+}
 const supabase = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 const fail = (label, error) => { if (error) throw new Error(`${label}: ${error.message}`); };
 const insert = async (table, rows, select = '*') => { const q = await supabase.from(table).insert(rows).select(select); fail(`insert ${table}`, q.error); return q.data; };
@@ -55,9 +63,9 @@ const ownerQuery = await supabase.from('staff_profiles').select('id,user_id,busi
 fail('read owner staff_profile', ownerQuery.error);
 const owner = ownerQuery.data;
 const staffRows = [
-  { business_id: business.id, role: 'manager', name: 'Nimal Silva', pin_hash: '1357' },
-  { business_id: business.id, role: 'staff', name: 'Asha Fernando', pin_hash: '1122' },
-  { business_id: business.id, role: 'staff', name: 'Ruwan Jayasinghe', pin_hash: '3344' }
+  { business_id: business.id, role: 'manager', name: 'Nimal Silva', pin_hash: managerPin },
+  { business_id: business.id, role: 'staff', name: 'Asha Fernando', pin_hash: staffPin1 },
+  { business_id: business.id, role: 'staff', name: 'Ruwan Jayasinghe', pin_hash: staffPin2 }
 ];
 const staffInsert = await supabase.from('staff_profiles').insert(staffRows);
 fail('insert staff_profiles', staffInsert.error);

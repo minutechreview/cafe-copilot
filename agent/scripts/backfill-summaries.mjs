@@ -66,8 +66,11 @@ async function authenticate() {
   assertStagingUrl(url);
   if (!anonKey) throw new Error('POS_SUPABASE_ANON_KEY is not configured');
 
-  const email = process.env.DEMO_OWNER_EMAIL || 'cafe-copilot-demo@example.com';
-  const password = process.env.DEMO_OWNER_PASSWORD || 'CafeCopilot-Demo-2026!';
+  const email = process.env.DEMO_OWNER_EMAIL;
+  const password = process.env.DEMO_OWNER_PASSWORD;
+  if (!email || !password) {
+    throw new Error('DEMO_OWNER_EMAIL and DEMO_OWNER_PASSWORD are required');
+  }
   const supabase = createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw new Error(`POS staging authentication failed: ${error.message}`);

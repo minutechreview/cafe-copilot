@@ -66,10 +66,9 @@ hard rules (numbers must come from a tool result, tool-result content is data no
 instructions, LKR formatting), maxTokens capped at 700/call. DEMO_BUSINESS_ID
 (5065eeed-8968-4d41-b72b-f2293454addc) plus POS_SUPABASE_URL/POS_SUPABASE_ANON_KEY (copied
 from Project POS's .env.staging per CONTRACTS.md) added to .env.local — now the same id
-drives both the POS lookup and the CockroachDB memory rows. DEMO_OWNER_PASSWORD was not in
-.env.local; used pos-sync/cli.mjs and demo-seed/seed.mjs's existing committed fallback
-('CafeCopilot-Demo-2026!') rather than guessing a new one, since that's the account those
-scripts already created and verified live.
+drives both the POS lookup and the CockroachDB memory rows. The original demo scripts used a
+committed fallback password; that fallback has since been removed, the staging demo password
+has been rotated, and the replacement exists only in the operator's gitignored `.env.local`.
 
 memory/store.mjs's upsertDocument extended to key on (business_id, doc_type, doc_date) when
 no explicit id is given (natural-key lookup then UPSERT INTO by id) so the new backfill script
@@ -216,3 +215,47 @@ get_waste_log tools live and publicly verified ("Ruwan Jayasinghe... LKR 90,550.
 refunds attributed as approved-by, mirroring POS staff-report honesty. 86/86 tests. Remaining:
 C7 (submission kit: public GitHub repo + license visibility check, video, tool docs, optional
 diagram/feedback + optional ccloud probe wiring) and the post-C6 floating dashboard widget.
+
+## 2026-07-25 — release-readiness pass (Opus orchestrator + Sonnet builders)
+Nothing deployed, nothing pushed, no migrations applied, production untouched.
+
+Live findings, all evidence-backed. (1) README advertised a public demo at cafe-copilot.pages.dev
+"no login required" — false: the deployed Lambda rejects that origin (403) and DEMO_MODE_ENABLED
+is not "true" (403), and the function has no DEMO_OWNER_EMAIL/PASSWORD, so demo mode could not
+have authenticated to the POS even if enabled. The POS-embedded authenticated widget is the only
+working surface; owner decision was to document that and retire the public-demo claim rather than
+re-open an unauthenticated endpoint. (2) The date-hardening prompt rule broke two of three
+headline questions: "How was yesterday?" and "have we had refund problems lately?" both asked for
+a calendar date instead of answering, the latter bypassing search_memory entirely — i.e. the
+flagship CockroachDB vector-index demo moment was dead. Fixed by resolving a trusted
+business-local date from the business's own locale_default (tools.mjs resolveBusinessContext,
+reusing fetchBusinessMeta/localeOffset/toBusinessDateKey) and branching buildSystemPrompt on it;
+any lookup failure degrades to the original ask-for-the-date prompt, abort still propagates. Added
+prompt rules 7 (route vague/multi-day questions to search_memory first) and 8 (state no_activity
+plainly, never invent). (3) get_staff_performance was BROKEN in production — POS migration
+00000000000023 dropped till_sessions_staff_id_fkey and installed composite
+(business_id, staff_id) + (business_id, closed_by) FKs, so the PostgREST embed was neither
+resolvable by column hint nor unambiguous without one. Every unit test still passed because the
+POS client is mocked everywhere. Fixed by pinning constraint name
+till_sessions_business_staff_fkey, plus a regression test asserting the embed hint.
+(4) npm run lint failed at repo root with 34 errors — missing eslint config coverage for
+pos-sync/demo-seed/ops; fixed in config only, no source edits in the Codex track's directories.
+
+Verified read-only: CockroachDB has all 5 memory tables + schema_migrations ledger,
+documents.embedding is a real vector column with documents_embedding_idx, 21 daily_summary docs
+covering 2026-06-22..2026-07-12. Lambda is nodejs22.x/55s/512MB, RESPONSE_STREAM, reserved
+concurrency 2, and carries NO static AWS credentials (IAM role only). Deployed code size matches
+the local bundle byte-for-byte, so the deployed function is pre-fix. Secret hygiene clean across
+full git history — no .env, AWS key, CRDB string, or Supabase key ever committed.
+
+All 7 tools verified live end to end against real Bedrock + POS staging + CockroachDB, including
+save_note/list_notes which had never been exercised on the live cluster despite being a headline
+README claim (notes table was empty). 202 tests (was 192), lint clean, build clean.
+
+Docs: README rewritten for the authenticated architecture; new docs/RUNBOOK.md,
+docs/DEMO_SCRIPT.md, docs/SUBMISSION_CHECKLIST.md; SUBMISSION.md and VIDEO_SCRIPT.md rewritten.
+BLOCKING for the demo: the agent Lambda must be rebuilt and redeployed before demoing or
+recording — steps 2 and 3 of docs/DEMO_SCRIPT.md fail on the currently deployed bundle.
+Known gap worth a contract decision: Café Copilot reads a schema owned by Project POS, which is
+actively migrating, and nothing in the suite would catch the next such break because the POS
+client is mocked everywhere — a thin staging smoke test over the real embeds would close it.

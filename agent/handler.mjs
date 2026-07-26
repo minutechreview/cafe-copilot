@@ -4,7 +4,7 @@
 // behind AWS Lambda response streaming (C6) without changes to this file.
 import { BedrockRuntimeClient, ConverseStreamCommand } from '@aws-sdk/client-bedrock-runtime';
 import { createConversation, appendMessage, conversationExists, getRecentMessages } from '../memory/store.mjs';
-import { toolConfig, executeTool } from './tools.mjs';
+import { toolConfig, executeTool, resolveBusinessContext } from './tools.mjs';
 import { resolveAuthContext } from './auth-context.mjs';
 import { getAuthenticatedPosClient, getDemoPosClient } from './pos-client.mjs';
 
@@ -26,12 +26,26 @@ class ValidationError extends Error {
   }
 }
 
-function buildSystemPrompt() {
+/**
+ * @param {{ today: string, currency: string, locale: string|null } | null} businessContext
+ *   Trusted business-local date/currency/locale resolved once per turn from the business's own
+ *   POS configuration (see resolveBusinessContext in tools.mjs), or null when that lookup
+ *   failed/was unavailable. Only businessContext.today (never server UTC, never the model's own
+ *   knowledge) may ever be used to resolve a relative period like "today" or "yesterday".
+ */
+function buildSystemPrompt(businessContext) {
+  const dateRule = businessContext
+    ? `Today's business-local date is ${businessContext.today}. You may resolve "today", ` +
+      '"yesterday", "last week", "this month", and other RELATIVE periods against THAT date ' +
+      'only. Never infer a business-local date from server UTC or from your own general ' +
+      'knowledge — the date stated here is the only trusted one.'
+    : 'Do not infer a business-local date from server UTC. If a user asks about "today", "yesterday", ' +
+      'or another relative period without a trusted business-local date, ask for the calendar date. ' +
+      'Use tool results to establish available data and currency.';
+
   return [
     'You are Cafe Copilot, a warm, plain-language assistant for a small independent cafe owner.',
-    'Do not infer a business-local date from server UTC. If a user asks about "today", "yesterday", ' +
-      'or another relative period without a trusted business-local date, ask for the calendar date. ' +
-      'Use tool results to establish available data and currency.',
+    dateRule,
     'Hard rules, no exceptions:',
     '1. Every number you say — sales, counts, amounts, variances — must come from a tool ' +
       'result you received in this conversation. Never estimate, round imaginatively, or ' +
@@ -49,6 +63,15 @@ function buildSystemPrompt() {
       'up — always say "approved by" or "refunds approved", never "caused" or "made". When ' +
       'answering get_waste_log questions, state the reasons for waste plainly (e.g. ' +
       '"damaged" or "spoiled"), not vaguely.',
+    '7. For a vague historical-anomaly question with no specific date — for example, ' +
+      '"have we had refund problems lately?" — call search_memory FIRST because it searches ' +
+      'stored daily summaries by meaning. For a current operational aggregate such as waste, ' +
+      'staff performance, sales, or cash over a relative period, resolve the period from the ' +
+      'trusted business-local date and call the matching live POS tool; never substitute a ' +
+      'memory summary for a live aggregate.',
+    '8. If a tool result marks a date as no_activity, say plainly that there is no activity ' +
+      'recorded for that day — never invent numbers to fill the gap. You may mention the ' +
+      'most recent day you do have data for, but only if a tool result told you that date.',
     'Style: keep answers short. Use simple dash lists ("- like this") when listing multiple ' +
       'things. Use **bold** only for key figures — amounts, dates, counts. Never use ' +
       'headings, tables, emoji, or nested lists.',
@@ -392,7 +415,32 @@ export async function handler({
     return;
   }
 
-  const systemPrompt = buildSystemPrompt();
+  // Resolve the trusted business-local date once per turn, before the system prompt is built.
+  // Any lookup failure degrades to null (the fail-safe ask-for-the-date prompt) rather than
+  // failing the whole request — except an abort/deadline, which must still fail the turn like
+  // every other abort path in this function, not be silently treated as "no context".
+  let businessContext = null;
+  if (posClient) {
+    try {
+      businessContext = await resolveBusinessContext(posClient, activeBusinessId, signal);
+    } catch (err) {
+      if (signal?.aborted || err?.name === 'AbortError') {
+        console.error('[agent] business context resolution aborted', {
+          conversationId: activeConversationId,
+          error: err?.message ?? String(err),
+        });
+        onEvent({ type: 'error', message: GENERIC_ERROR });
+        return;
+      }
+      console.error('[agent] business context resolution failed', {
+        conversationId: activeConversationId,
+        error: err?.message ?? String(err),
+      });
+      businessContext = null;
+    }
+  }
+
+  const systemPrompt = buildSystemPrompt(businessContext);
   const maxTokens = configuredPositiveInteger('BEDROCK_MAX_TOKENS', DEFAULT_MAX_TOKENS, 2_000);
   const initialMessages = [...toConverseMessages(history), { role: 'user', content: [{ text: message }] }];
   const ctx = {

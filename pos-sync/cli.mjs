@@ -18,8 +18,9 @@ let ref = ''; try { ref = new URL(url).hostname.split('.')[0]; } catch {}
 if (ref !== 'ljnzschozufepfpkzwjy') throw new Error(`SAFETY ABORT: staging ljnzschozufepfpkzwjy required; received ${ref || 'invalid/missing URL'}.`);
 if (!process.env.POS_SUPABASE_ANON_KEY) throw new Error('POS_SUPABASE_ANON_KEY is required.');
 const supabase = createClient(url, process.env.POS_SUPABASE_ANON_KEY, { auth: { persistSession:false, autoRefreshToken:false } });
-const email = process.env.DEMO_OWNER_EMAIL || 'cafe-copilot-demo@example.com';
-const password = process.env.DEMO_OWNER_PASSWORD || 'CafeCopilot-Demo-2026!';
+const email = process.env.DEMO_OWNER_EMAIL;
+const password = process.env.DEMO_OWNER_PASSWORD;
+if (!email || !password) throw new Error('DEMO_OWNER_EMAIL and DEMO_OWNER_PASSWORD are required.');
 const auth = await supabase.auth.signInWithPassword({ email, password });
 if (auth.error) throw new Error(`Authentication failed: ${auth.error.message}`);
 const summary = await generateDailySummary({ supabase, businessId:args.business, date:args.date });

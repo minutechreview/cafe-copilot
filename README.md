@@ -1,47 +1,87 @@
 # Cafe Copilot
 
-**A plain-language AI assistant for small café owners.** Most POS software gives an owner
-dashboards full of numbers. Cafe Copilot lets them just ask: "How was yesterday?", "Why was
-the drawer short on Tuesday?", "Which items are wasting us money?" — and gets an honest
-answer, in plain words, computed from the café's real till data. It can also draft things for
-a human to review (a purchase order), but it never writes anything back to the point-of-sale
-system itself.
+A plain-language AI assistant for small cafe owners. Most POS software gives an owner dashboards full of numbers. Cafe Copilot lets them ask instead: "How was yesterday?", "Why was the drawer short?", "Have we had problems with refunds lately?" — and get an honest answer, computed live from the cafe's real till data. It can also draft things for a human to review (a purchase order), but it never writes anything back to the point-of-sale system itself.
 
-Cafe Copilot is a companion app to Project POS (a lightweight POS + Kitchen Display System for
-small food businesses) — it reads that system's data read-only and adds a conversational layer
-on top.
+Cafe Copilot is a companion to Project POS (a lightweight POS + Kitchen Display System for small food businesses). It reads that system's data read-only and adds a conversational layer on top, embedded directly in the POS manager dashboard.
 
-**Live demo:** https://cafe-copilot.pages.dev — no login required, talks to a seeded fictional
-café ("Harbour & Bean Demo Café") with three weeks of realistic sales history.
+Built for the CockroachDB x AWS AI Hackathon.
 
-Try asking:
-- "How was yesterday?"
-- "Why was the drawer short on July 4th?"
-- "Draft a purchase order for milk and coffee beans"
+## Problem
 
-Built for the **CockroachDB × AWS AI Hackathon**.
+A non-technical cafe owner does not want to learn a reporting dashboard to answer questions they already know how to ask out loud — "how did we do yesterday", "why was the till short", "who's my best staff member this month". Answering those questions correctly requires querying several tables (orders, till sessions, adjustments, waste logs) and reasoning across them without inventing numbers. Cafe Copilot does that querying and reasoning, in plain language, and refuses to guess when the data does not support an answer.
 
----
+## What it does
 
-## How CockroachDB is the memory layer
+- Answers questions about a specific day's sales, cash reconciliation, and order mix.
+- Compares staff performance and cash accountability over a date range.
+- Surfaces waste and comp log entries, grouped by reason and by item.
+- Searches its own memory of past daily summaries by meaning, not just exact dates, so a vague question like "have we had problems with refunds lately" still finds the right day.
+- Remembers business notes the owner asks it to keep ("we switch to the winter menu in November") and lists them back on request.
+- Drafts a purchase order for the owner to review. Drafts are saved, never submitted.
+- States plainly when a date has no recorded activity instead of inventing a figure.
 
-Every part of what the agent "remembers" — not just chat history, but the business context it
-draws on to answer a question — lives in CockroachDB, not in the browser or in Bedrock. Nothing
-about a conversation survives if CockroachDB isn't there.
+## Demo
 
-- **Conversations and messages** are persisted on every turn (`memory/store.mjs`,
-  `createConversation` / `appendMessage` / `getRecentMessages`). The web client only keeps a
-  conversation *id* in `localStorage` — reload the page, ask "what did I just ask you?", and the
-  agent answers correctly because CockroachDB, not the tab, is what remembers.
-- **Business notes** the owner asks the copilot to remember (`save_note` / `list_notes` tools)
-  are durable rows in the `notes` table, scoped per business.
-- **Purchase-order drafts** the agent produces are saved to the `drafts` table as JSONB and
-  returned to the UI as a reviewable card — never auto-submitted anywhere.
-- **21 vector-indexed daily summaries** — one embedded narrative + key-figures document per
-  seeded demo day — live in the `documents` table with a real `CREATE VECTOR INDEX`, so the
-  agent's `search_memory` tool can retrieve relevant history by meaning, not just exact dates.
+The supported demo surface is the Copilot widget embedded in the Project POS staging dashboard, running in authenticated mode against a real signed-in session.
 
-The schema (`memory/schema.sql`):
+1. Open the POS staging dashboard: `https://phase-8-auth.project-pos.pages.dev`.
+2. Sign in with the dedicated staging demo-owner credentials supplied privately by the project owner.
+3. Enter the staging demo-owner PIN when prompted.
+4. Open the manager dashboard.
+5. Click the floating Copilot button and ask a question.
+
+The account is restricted by Row-Level Security to the fictional "Harbour & Bean Demo Café" only. Credentials are deliberately not committed to this public repository. Judges with access can browse the dashboard reports beside the chat to verify the raw data behind an answer.
+
+The seeded demo data covers 2026-06-22 through 2026-07-12. Questions about dates outside that range correctly come back as "no activity recorded" rather than an invented figure.
+
+Questions verified end to end against live Amazon Bedrock, the POS staging project, and CockroachDB — with the actual streamed answers:
+
+- "Why was the drawer short on July 4th 2026?" — LKR 4,800 short; expected LKR 34,850 vs counted LKR 30,050; 18 orders, LKR 32,400 gross.
+- "Have we had any problems with refunds lately?" — retrieves the 8 July spike (4 refunds totalling LKR 2,800) via vector search, with no date supplied by the user.
+- "Who were our best staff between July 1st and July 12th 2026?" — Ruwan Jayasinghe, LKR 174,250 over 102 orders; Nimal Silva, LKR 158,700 over 94 orders with a LKR 4,975 net short.
+- "How was yesterday?" — correctly answers that there is no activity recorded for that date rather than inventing figures, when the date falls outside the seeded range.
+
+The standalone app in `web/` is a local development client (`npm run dev:web`), useful for iterating on the chat UI without the POS dashboard running. It always sends `mode: "demo"` and is not a hosted public demo — see [Deployment](#deployment).
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Clients
+        POS[POS staging dashboard\nCopilot widget - mode: authenticated]
+        WEB[Local dev web client\nweb/ - mode: demo, local only]
+    end
+
+    subgraph AWS
+        FN[Lambda Function URL\nRESPONSE_STREAM, SSE]
+        BR[Amazon Bedrock\nClaude Sonnet 4.5 Converse + Titan v2 embeddings]
+    end
+
+    CRDB[(CockroachDB\nconversations / notes / drafts /\nvector-indexed documents)]
+    PSB[(POS Supabase staging\nauth, business_memberships,\norders / tills / staff / waste)]
+
+    POS -- "POST /chat (SSE)\nSupabase JWT + businessId" --> FN
+    WEB -- "POST /chat (SSE)\nmode: demo" --> FN
+    FN -- "verify JWT + membership" --> PSB
+    FN -- "Converse stream + embeddings" --> BR
+    FN -- "read/write memory, scoped per\nbusiness_id/actor_id/access_mode" --> CRDB
+    FN -- "SELECT-only tool calls,\ncaller-scoped client" --> PSB
+    FN -- "streamed deltas + draft events" --> POS
+    FN -- "streamed deltas + draft events" --> WEB
+```
+
+The agent loop (`agent/handler.mjs` + `agent/tools.mjs`) sends the conversation to Bedrock, streams text as it arrives, and — when the model requests a tool — executes it and feeds the result back: `get_day_summary`, `get_staff_performance`, and `get_waste_log` run live, read-only queries against the POS staging project; `search_memory` embeds the query and vector-searches CockroachDB; `save_note` / `list_notes` / `draft_purchase_order` read and write CockroachDB directly. The POS stays the single source of truth for every number the agent states — CockroachDB is for context and retrieval, never for arithmetic.
+
+## How CockroachDB is used
+
+Every part of what the agent "remembers" — not just chat history, but the business context it draws on to answer a question — lives in CockroachDB, scoped by a composite `(business_id, actor_id, access_mode)` principal on every table:
+
+- **Conversations and messages** are persisted on every turn (`memory/store.mjs`). Reading or appending to a conversation requires an exact match on all three principal fields, enforced with `INSERT ... SELECT` guards so ownership cannot be raced.
+- **Business notes** (`save_note` / `list_notes`) are durable rows in the `notes` table.
+- **Purchase-order drafts** are saved to the `drafts` table as JSONB, returned to the UI as a reviewable card, and never auto-submitted anywhere.
+- **Daily summaries** — one embedded narrative + key-figures document per day the pos-sync summariser has processed — live in the `documents` table with a real `CREATE VECTOR INDEX`, so `search_memory` can retrieve relevant history by meaning, not just exact dates. The seeded demo cafe currently has 21 such documents, covering 2026-06-22 through 2026-07-12.
+
+Schema (`memory/schema.sql`):
 
 ```sql
 CREATE TABLE IF NOT EXISTS documents (
@@ -58,7 +98,7 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE VECTOR INDEX IF NOT EXISTS documents_embedding_idx ON documents (embedding);
 ```
 
-And the cosine search behind `search_memory` (`memory/store.mjs`):
+Cosine search behind `search_memory` (`memory/store.mjs`):
 
 ```sql
 SELECT id, doc_type, doc_date, content, metadata, embedding <=> $2 AS distance
@@ -68,225 +108,137 @@ SELECT id, doc_type, doc_date, content, metadata, embedding <=> $2 AS distance
  LIMIT $3
 ```
 
-### The two required CockroachDB tools, and what the agent concretely does with each
+### The two required CockroachDB tools
 
-1. **Distributed Vector Indexing** — semantic recall over the daily summaries. Titan Text
-   Embeddings v2 embeds each summary and every incoming `search_memory` query; CockroachDB's
-   native `VECTOR` column and `CREATE VECTOR INDEX` do the nearest-neighbor search with the
-   cosine operator (`<=>`) — no separate vector database, no reindexing pipeline, no
-   consistency gap between the operational rows and the embeddings. Concretely proven in
-   `memory/verify.mjs`: two tiny documents are embedded and stored — "cold brew sales" and
-   "croissant waste" — then a third query, "coffee drinks", is embedded and searched. The
-   result correctly ranks "cold brew sales" above "croissant waste", because CockroachDB's
-   vector index found it semantically closer, not because of any keyword match. That's the
-   same mechanism the live demo uses when someone asks something like "have we had problems
-   with refunds lately?" — the agent doesn't know which day that is, so it searches memory by
-   meaning and gets back the flagged refund-spike summary.
-2. **Cloud Managed MCP Server** — connected directly during development for agent-to-cluster
-   work: read-only mode, fully audited, worked natively inside the coding agent (no bespoke
-   client, no separate driver setup) while designing and iterating on the schema and vector
-   index against the live cluster.
-
-**Bonus:** `ops/crdb-health.mjs` is a read-only CockroachDB Cloud health probe over the `ccloud`
-CLI (noun-verb syntax, JSON output) — classifies a cluster as healthy/degraded/unhealthy from
-its state, with unit tests covering command construction, JSON parsing, and classification.
-It's wired up and tested but optional (not required for the demo to run) since it needs
-`ccloud` installed and authenticated locally.
+1. **Distributed Vector Indexing** — semantic recall over the daily summaries. Titan Text Embeddings v2 embeds each summary and every incoming `search_memory` query; CockroachDB's native `VECTOR` column and `CREATE VECTOR INDEX` do the nearest-neighbor search with the cosine operator (`<=>`) — no separate vector database, no reindexing pipeline. This is the same mechanism the live demo uses when someone asks "have we had problems with refunds lately?" — the agent has no date to search on, so it searches memory by meaning and gets back the flagged refund-spike summary.
+2. **Cloud Managed MCP Server** — connected directly during development for agent-to-cluster work: read-only mode, fully audited, worked natively inside the coding agent while designing and iterating on the schema and vector index against the live cluster.
 
 ## AWS services used
 
-- **Amazon Bedrock** runs the model: Claude Sonnet 4.5 via the **Converse Stream** API for the
-  chat loop (tool-calling, streamed text deltas), and **Titan Text Embeddings v2** for the
-  vectors that back `search_memory`. The Bedrock model id and embedding model id are discovered
-  and pinned per-account by `npm run find-model` / `npm run find-embedding-model` rather than
-  hardcoded, since model availability differs per AWS account/region.
-- **AWS Lambda** hosts the whole agent backend behind a public **Function URL** in
-  `RESPONSE_STREAM` invoke mode, so the same Server-Sent-Events protocol the local dev server
-  speaks works unchanged in production. No static AWS credentials are ever deployed — the
-  function relies entirely on its IAM execution role, which is scoped to exactly
-  `bedrock:InvokeModel` / `bedrock:InvokeModelWithResponseStream` plus its own CloudWatch Logs
-  group (see the inline policy in `agent/scripts/deploy-lambda.mjs`).
+- **Amazon Bedrock** runs the model: Claude Sonnet 4.5 via the Converse Stream API for the chat/tool loop, and Titan Text Embeddings v2 for the vectors behind `search_memory`. Model and embedding-model ids are discovered and pinned per-account by `npm run find-model` / `npm run find-embedding-model` rather than hardcoded, since model availability differs per AWS account and region.
+- **AWS Lambda** hosts the agent backend (`nodejs22.x`, 512 MB, 55 s timeout, reserved concurrency 2) behind a public Function URL in `RESPONSE_STREAM` invoke mode, streaming Server-Sent Events. No static AWS credentials exist in the function's environment — Bedrock access comes solely from its IAM execution role, scoped to `bedrock:InvokeModel*` plus its own CloudWatch Logs group.
 
-## Architecture
+## Security posture
 
-```mermaid
-flowchart LR
-    subgraph Browser
-        UI[Chat UI\nCloudflare Pages]
-    end
+- **Authenticated, per-business, no elevation.** The POS-embedded widget sends `mode: "authenticated"` with the signed-in user's Supabase JWT and an explicit `businessId`. The backend (`agent/auth-context.mjs`) verifies the JWT with Supabase, then requires an active `owner` or `manager` row in `business_memberships` for that exact business before any data is touched. Every POS-reading tool then runs through a request-scoped Supabase client built from the caller's own JWT (`agent/pos-client.mjs`), so row-level security applies to the caller — the backend never elevates its own privileges. Verified live today: no token returns 401, an invalid token returns 401, a disallowed browser origin returns 403, a missing or invalid `mode` returns 400, an oversized request body returns 413.
+- **Staging-only, enforced in code.** `assertStagingUrl` in `agent/pos-client.mjs` hard-refuses any Supabase URL that is not exactly the POS staging project — wrong hostname, non-HTTPS, embedded credentials, or a non-default port all abort loudly rather than silently falling through.
+- **Memory tenancy.** Every CockroachDB statement is parameterized and predicated on the composite `(business_id, actor_id, access_mode)` principal, using `INSERT ... SELECT` guards so a conversation, note, or draft cannot be raced into existing under the wrong owner.
+- **Numbers only come from live tool results**, never estimated or recalled from outside a tool call in the current conversation — enforced in the system prompt. Refunds and voids in `get_staff_performance` are attributed to whichever staff member approved the adjustment, not framed as something they personally rang up. Anything a tool returns is marked as business data the model must never treat as a command, even if its text looks instruction-shaped.
+- **No writes to the POS, ever.** The agent's only "write" capabilities, `save_note` and `draft_purchase_order`, land in CockroachDB, not the POS. Every POS-reading tool performs `SELECT`-only queries.
+- **Guardrails in code:** reserved concurrency, a per-IP rate limit window, a per-request deadline (504), a max body size (413), a max input length, a Bedrock max-output-tokens cap, and a 6-iteration cap on the agent tool loop. The rate limiter is per warm Lambda instance, not global — see [Limitations](#limitations).
 
-    subgraph AWS
-        FN[Lambda Function URL\nRESPONSE_STREAM, SSE]
-        BR[Amazon Bedrock\nClaude Sonnet 4.5 Converse + Titan v2 embeddings]
-    end
-
-    CRDB[(CockroachDB\nconversations / notes / drafts /\nvector-indexed documents)]
-    POS[(Project POS — Supabase staging\nread-only: orders, tills, staff, waste)]
-
-    UI -- "POST /chat (SSE)" --> FN
-    FN -- "Converse stream + embeddings" --> BR
-    FN -- "read/write memory" --> CRDB
-    FN -- "SELECT-only tool calls" --> POS
-    FN -- "streamed deltas + draft events" --> UI
-```
-
-The agent loop (`agent/handler.mjs` + `agent/tools.mjs`) sends the conversation to Bedrock,
-forwards text as it streams, and — when the model requests a tool — executes it and feeds the
-result back: `get_day_summary`, `get_staff_performance`, and `get_waste_log` all run live,
-read-only queries against the POS staging project (never cached, never guessed); `search_memory`
-embeds the query and vector-searches CockroachDB; `save_note` / `list_notes` /
-`draft_purchase_order` read and write CockroachDB directly. The POS stays the single source of
-truth for every number the agent says — CockroachDB is for context and retrieval, never for
-arithmetic.
-
-## Setup & run (from a fresh clone)
+## Local setup (from a fresh clone)
 
 Requires Node 20+ and npm.
 
-1. Install dependencies from the repo root (npm workspaces cover `web/`, `agent/`, and
-   `memory/`):
-   ```
-   npm install
-   ```
-2. Create `.env.local` at the repo root (gitignored — never commit it) with these variable
-   names (see `docs/CONTRACTS.md` for what each one is and where its value comes from):
-   - `CRDB_CONNECTION_STRING` — your CockroachDB cluster connection string (agent memory)
-   - `AWS_REGION` — the AWS region used by the local Bedrock client and deployment tooling;
-     local AWS authentication follows the AWS SDK default credential provider chain
-   - `BEDROCK_MODEL_ID` — generate automatically with `npm run find-model` (discovers the best
-     available Sonnet model on your account and appends it), or set by hand
-   - `BEDROCK_EMBEDDING_MODEL_ID`, `EMBEDDING_DIM` — generate automatically with
-     `npm run find-embedding-model`
-   - `POS_SUPABASE_URL`, `POS_SUPABASE_ANON_KEY` — the POS staging project (the agent refuses
-     to run against any other project ref)
-   - `DEMO_BUSINESS_ID` — the seeded demo café's business id, used for both the POS lookup and
-     the CockroachDB memory rows
-   - `DEMO_OWNER_EMAIL` / `DEMO_OWNER_PASSWORD` — optional; default to the demo owner account
-     the seed scripts already created (see "Demo credentials" below)
-3. **With approval for a database write**, apply the CockroachDB schema (conversations,
-   messages, notes, drafts, documents + vector index — idempotent, safe to re-run):
-   ```
-   npm run memory:migrate
-   ```
-4. Seed a demo café on POS staging with realistic history (owned by the Codex track's
-   `demo-seed/` workspace — install its own dependencies first since it isn't an npm
-   workspace):
-   ```
-   cd demo-seed && npm install && npm run seed -- --fresh && cd ..
-   ```
-5. **With approval for a database write and Bedrock calls**, backfill the agent's memory with
-   embedded daily summaries for the seeded date range, so `search_memory` has something to
-   retrieve (idempotent, safe to re-run):
-   ```
-   npm run agent:backfill
-   ```
-6. Start the backend and frontend in separate terminals:
-   ```
-   npm run dev:agent   # POST /chat on http://localhost:8787
-   npm run dev:web     # chat UI on http://localhost:5173, proxies /chat to the agent
-   ```
-7. Open http://localhost:5173 and send a message. Reload the page and ask "What did I just ask
-   you?" — the conversation continues, because CockroachDB remembers it, not the browser tab.
+Install dependencies from the repo root (npm workspaces cover `web/`, `agent/`, and `memory/`):
 
-Other useful commands from the repo root:
-- `npm run lint`, `npm test` (agent + memory + web unit tests), `npm run build` (production web
-  build)
-- `npm run memory:verify` — live proof the memory layer works end to end: migrates, writes and
-  reads back a conversation, embeds two texts via real Bedrock, upserts them as vector-indexed
-  documents, vector-searches with a third embedded query, and cleans up its own rows.
-- `npm run agent:backfill` — embeds a daily-summary document (narrative + key figures) for
-  every date in the seeded demo café's history and upserts it into CockroachDB memory.
-
-### Deployment
-
-Two independent halves: the agent runs as an AWS Lambda behind a public Function URL (response
-streaming); the web chat UI is a static build on Cloudflare Pages that talks to that Function
-URL. Redeploying either half never requires redeploying the other.
-
-**Agent (AWS Lambda).** Everything the agent needs is read from environment variables set on
-the Lambda function (`.env.local` is only for local dev — never uploaded). Required names:
-`CRDB_CONNECTION_STRING`, `BEDROCK_MODEL_ID`, `BEDROCK_EMBEDDING_MODEL_ID`, `EMBEDDING_DIM`,
-`DEMO_BUSINESS_ID`, `POS_SUPABASE_URL`, `POS_SUPABASE_ANON_KEY`, and optionally
-`DEMO_OWNER_EMAIL` / `DEMO_OWNER_PASSWORD`. AWS access comes entirely from the function's IAM
-execution role — no AWS keys are ever set as Lambda environment variables.
-
-```
-npm run bundle --workspace=agent          # esbuild -> agent/dist-lambda/{index.mjs,function.zip}
-npm run deploy-lambda --workspace=agent   # idempotent: IAM role, function code, concurrency, Function URL + CORS
+```bash
+npm install
 ```
 
-The deploy script first reads the pre-built `agent/dist-lambda/function.zip`; it never bundles
-for you, so run `bundle` immediately before deploying. It reads CORS origins only from
-`WEB_ORIGIN` (required) and the optional comma-separated `COPILOT_ALLOWED_ORIGINS` in
-`.env.local`; it accepts no origin CLI argument.
+Create `.env.local` at the repo root (gitignored, never committed). See `docs/CONTRACTS.md` for what each variable is and where its value comes from:
 
-Configure Lambda variables by category, without placing values in this README:
+- `CRDB_CONNECTION_STRING` — your CockroachDB cluster connection string.
+- `AWS_REGION` — region for the local Bedrock client and deployment tooling; AWS auth follows the SDK's default credential provider chain.
+- `BEDROCK_MODEL_ID` — generate with `npm run find-model`, or set by hand.
+- `BEDROCK_EMBEDDING_MODEL_ID`, `EMBEDDING_DIM` — generate with `npm run find-embedding-model`.
+- `POS_SUPABASE_URL`, `POS_SUPABASE_ANON_KEY` — the POS staging project (the agent refuses to run against any other project).
+- `DEMO_BUSINESS_ID` — the seeded demo cafe's business id.
+- `DEMO_OWNER_EMAIL` / `DEMO_OWNER_PASSWORD` — required for local demo mode, seeding,
+  backfilling, and the authenticated staging smoke; there is no committed fallback.
+- `DEMO_OWNER_PIN`, `DEMO_MANAGER_PIN`, `DEMO_STAFF_PIN_1`, `DEMO_STAFF_PIN_2` — four distinct
+  four-digit values required only when creating or recreating the fictional staging café.
+  Keep them in `.env.local`; do not put their values in documentation or commits.
 
-- Runtime connections and identity: `CRDB_CONNECTION_STRING`, `DEMO_BUSINESS_ID`,
-  `POS_SUPABASE_URL`, `POS_SUPABASE_ANON_KEY`, and optionally `DEMO_OWNER_EMAIL` /
-  `DEMO_OWNER_PASSWORD`.
-- Bedrock: `BEDROCK_MODEL_ID`, `BEDROCK_EMBEDDING_MODEL_ID`, `EMBEDDING_DIM`.
-- Browser access: `WEB_ORIGIN`, optionally `COPILOT_ALLOWED_ORIGINS`.
-- Required guardrails: `DEMO_MODE_ENABLED`, `BEDROCK_MAX_TOKENS`,
-  `COPILOT_MAX_INPUT_CHARS`, `COPILOT_MAX_BODY_BYTES`, `COPILOT_REQUEST_TIMEOUT_MS`,
-  `COPILOT_RATE_LIMIT_MAX_REQUESTS`, `COPILOT_RATE_LIMIT_WINDOW_MS`, and
-  `COPILOT_RESERVED_CONCURRENCY`.
-- Optional CockroachDB pool ceilings: `CRDB_POOL_MAX`, `CRDB_CONNECTION_TIMEOUT_MS`,
-  `CRDB_IDLE_TIMEOUT_MS`, `CRDB_QUERY_TIMEOUT_MS`, and `CRDB_STATEMENT_TIMEOUT_MS`; optional
-  locale configuration: `COPILOT_LOCALE_OFFSETS`.
+Apply the CockroachDB schema (idempotent, safe to re-run):
 
-Local deploy credentials are resolved by the AWS SDK default credential provider chain (for
-example a configured profile or environment supplied to the deploy process). They are distinct
-from the Lambda runtime: the deployer creates/updates the function, while the deployed function
-uses only its IAM execution role for Bedrock and logs. Static AWS credentials are intentionally
-excluded from Lambda environment variables.
-
-For an existing function, deployment uses Lambda `RevisionId` compare-and-swap to acquire a
-fencing lock, first taking reserved concurrency to zero. A conflicting or unconfirmed lock
-fails closed without continuing the update. A crashed guarded deployment may therefore leave
-capacity at zero; recover it deliberately only after confirming the original deployer stopped.
-
-**Web (Cloudflare Pages).** Build with `VITE_CHAT_URL` set to the deployed Function URL, then
-deploy the static output:
+```bash
+npm run memory:migrate
 ```
-VITE_CHAT_URL=<function-url> npm run build --workspace=web
-npx wrangler pages project create cafe-copilot --production-branch main   # first time only
-npx wrangler pages deploy web/dist --project-name cafe-copilot --branch main
+
+Seed a demo cafe on POS staging (owned by a separate workspace; install its dependencies first):
+
+```bash
+cd demo-seed && npm install && npm run seed -- --fresh && cd ..
 ```
-Leaving `VITE_CHAT_URL` unset keeps the build pointed at the relative `/chat` path used by the
-local Vite dev proxy — only set it for a production deploy.
 
-The commands above are deployment instructions, not evidence of a live deployment. Live URLs,
-credentials, migration state, and backfill state must be verified by the approved operator.
+Backfill the agent's memory with embedded daily summaries for the seeded date range, so `search_memory` has something to retrieve (idempotent, safe to re-run):
 
-## Demo credentials
+```bash
+npm run agent:backfill
+```
 
-The seeded demo café's owner login is `cafe-copilot-demo@example.com`, password
-`CafeCopilot-Demo-2026!` (committed as the fallback default in `demo-seed/seed.mjs`,
-`pos-sync/cli.mjs`, and `agent/pos-client.mjs`). **This is intentionally public.** Row-level
-security on the POS scopes that account to see only the fictional "Harbour & Bean Demo Café"
-data — nothing else. Judges are welcome to log into the [POS staging
-dashboard](https://phase-8-auth.project-pos.pages.dev) with the same credentials to see the raw
-data the copilot's answers are computed from, side by side with the chat.
+Start the backend and frontend in separate terminals:
 
-## Safety & honesty design
+```bash
+npm run dev:agent
+```
 
-- **Numbers only come from live tool results.** The system prompt hard-forbids the model from
-  estimating or recalling a figure that didn't come from a tool call in the current
-  conversation — every sales, cash, staff, or waste number the agent states was just queried
-  live from the POS.
-- **Approved-by attribution, not caused-by.** Refunds and voids in `get_staff_performance` are
-  attributed to whichever staff member *approved* the adjustment (an owner/manager sign-off),
-  never framed as something they personally rang up — the same honesty rule the POS's own Staff
-  Reports page enforces.
-- **Data is data, never instructions.** Anything a tool returns (order notes, saved notes, item
-  names) is explicitly marked in the system prompt as business data the model should never treat
-  as a command, even if its text looks instruction-shaped — a basic prompt-injection guard for
-  content that ultimately comes from a database row.
-- **No writes to the POS, ever.** The agent's only "write" capabilities are `save_note` and
-  `draft_purchase_order`, both of which land in CockroachDB, not the POS. Every POS-reading tool
-  performs `SELECT`-only queries.
+```bash
+npm run dev:web
+```
+
+`dev:agent` serves `POST /chat` on `http://localhost:8787`. `dev:web` serves the chat UI on `http://localhost:5173` and proxies `/chat` to the agent. Open `http://localhost:5173` and send a message; reload the page and ask "what did I just ask you?" — the conversation continues, because CockroachDB remembers it, not the browser tab.
+
+## Verification commands
+
+```bash
+npm test
+```
+
+```bash
+npm run lint
+```
+
+```bash
+npm run build
+```
+
+`npm test` runs 202 tests across three workspaces (agent 145, memory 42, web 15). `npm run lint` and `npm run build` are both clean as of this writing.
+
+```bash
+npm run memory:verify
+```
+
+Live proof the memory layer works end to end against the real cluster: migrates, writes and reads back a conversation, embeds two texts via real Bedrock, upserts them as vector-indexed documents, vector-searches with a third embedded query, and cleans up its own rows.
+
+## Deployment
+
+Two independent halves: the agent runs as an AWS Lambda behind a public Function URL; the web chat UI is a static build (used locally, and optionally deployable to a static host). Redeploying either half never requires redeploying the other.
+
+Operational detail — deploy procedure, rollback, health checks, failure playbook, cost/abuse controls, observability, and incident response — lives in `docs/RUNBOOK.md` and is kept there rather than duplicated here.
+
+Build and deploy the agent:
+
+```bash
+npm run bundle --workspace=agent
+```
+
+```bash
+npm run deploy-lambda --workspace=agent
+```
+
+`bundle` produces `agent/dist-lambda/function.zip`; `deploy-lambda` reads that pre-built zip and never bundles for you. The deploy is idempotent and uses a fencing lock (Lambda `RevisionId` compare-and-swap) so a second concurrent deploy fails closed instead of racing the first.
+
+Lambda environment variables are set by category — connections/identity, Bedrock, browser access, and required guardrails — never with values in this README or committed anywhere. The full variable-by-variable table (name, purpose, required/optional, default) is in `docs/RUNBOOK.md` section 2. Static AWS credentials are never set as Lambda environment variables; the deployed function uses only its IAM execution role for Bedrock and logs.
+
+## Limitations
+
+- The seeded demo cafe has data only for 2026-06-22 through 2026-07-12; questions about dates outside that range correctly return "no activity" rather than inventing figures.
+- Public demo mode (`mode: "demo"` against the deployed function) is currently disabled; the authenticated POS-embedded widget is the supported path.
+- The per-IP rate limiter is per warm Lambda instance, not a global/shared limit — see `docs/RUNBOOK.md` section 7 for the practical implication.
+- There is no versioned Lambda rollback: `deploy-lambda.mjs` deploys with `Publish: false`, so rollback means checking out and redeploying older code, not reverting to a published version.
+- The whole system runs against POS staging; production is deliberately untouched, and the POS Copilot widget is gated off by default at build time.
+- CockroachDB migrations are forward-only; undoing one requires writing a new forward migration that reverses the effect.
+
+## Roadmap
+
+- Move the per-IP rate limiter to a shared store (e.g. CockroachDB or an external cache) so the limit is global rather than per-instance.
+- Publish versioned Lambda releases so a bad deploy can roll back to a known-good version instead of requiring a redeploy of older code.
+- Decide the intended long-term state of `DEMO_MODE_ENABLED`, and if it stays enabled, add the standalone web client's origin to the deployed function's allowed-origins list.
+- Add request-id correlated, structured logging (`docs/RUNBOOK.md` section 8) so one request's timeline, including Bedrock and tool-call latency, can be reconstructed from CloudWatch Logs Insights.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Built for the CockroachDB × AWS AI Hackathon.
+MIT — see [LICENSE](LICENSE). Built for the CockroachDB x AWS AI Hackathon.

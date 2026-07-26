@@ -56,6 +56,34 @@ export default [
     },
   },
   {
+    // pos-sync/, demo-seed/, and ops/ belong to another build track (see
+    // docs/CONTRACTS.md) and are off limits for source edits from here. They
+    // are plain Node ESM scripts, so this block only teaches ESLint about the
+    // Node runtime they already run under — it does not change their code.
+    files: ['pos-sync/**/*.mjs', 'demo-seed/**/*.mjs', 'ops/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: {
+        ...globals.node,
+      },
+    },
+    rules: {
+      // pos-sync/cli.mjs has an intentional empty catch around a best-effort
+      // URL parse; allowed via config since the file isn't ours to edit.
+      'no-empty': ['error', { allowEmptyCatch: true }],
+    },
+  },
+  {
+    files: ['ops/**/*.test.mjs'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.vitest,
+      },
+    },
+  },
+  {
     files: ['web/src/**/*.{js,jsx}'],
     plugins: { react },
     languageOptions: {

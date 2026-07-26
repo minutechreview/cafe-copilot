@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const generateDailySummaryMock = vi.fn();
 const embedTextMock = vi.fn();
@@ -224,6 +224,15 @@ describe('agent/tools.mjs', () => {
           { ...CTX, posClient: supabase }
         );
 
+        // Regression guard: the POS schema links till_sessions to staff_profiles twice
+        // (staff_id = who worked the shift, closed_by = who counted it down), both as
+        // composite (business_id, ...) FKs. A `!staff_id` column hint stopped resolving and an
+        // unhinted embed is ambiguous — which broke get_staff_performance live while every
+        // mocked test still passed, because the mocks never resolve the relationship. Pin the
+        // exact constraint-name hint so that failure mode cannot return silently.
+        expect(sessionsQuery.select).toHaveBeenCalledWith(
+          expect.stringContaining('staff_profiles!till_sessions_business_staff_fkey(name,role)')
+        );
         expect(sessionsQuery.gte).toHaveBeenCalledWith('opened_at', '2026-06-30T18:30:00.000Z');
         expect(sessionsQuery.lt).toHaveBeenCalledWith('opened_at', '2026-07-07T18:30:00.000Z');
         expect(ordersQuery.in).toHaveBeenCalledWith('till_session_id', ['s1', 's2']);
@@ -576,6 +585,60 @@ describe('agent/tools.mjs', () => {
         await expect(
           executeTool('draft_purchase_order', { items: [{ quantity: 5 }] }, CTX)
         ).rejects.toThrow('items[0].name is required');
+      });
+    });
+  });
+
+  describe('resolveBusinessContext', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('resolves business-local today from a non-UTC locale offset at a UTC instant where the local date is already the next day', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-07-24T20:00:00.000Z')); // en-LK is +05:30, so local time is already 2026-07-25
+      const supabase = makeSupabase({
+        businesses: makeQuery({ data: { id: 'biz-1', currency: 'LKR', locale_default: 'en-LK' }, error: null }),
+      });
+      const { resolveBusinessContext } = await import('../tools.mjs');
+
+      const result = await resolveBusinessContext(supabase, 'biz-1');
+
+      expect(result).toEqual({ today: '2026-07-25', currency: 'LKR', locale: 'en-LK' });
+    });
+
+    it('returns null (not a throw) when the business lookup errors', async () => {
+      const supabase = makeSupabase({
+        businesses: makeQuery({ data: null, error: { message: 'connection refused' } }),
+      });
+      const { resolveBusinessContext } = await import('../tools.mjs');
+
+      await expect(resolveBusinessContext(supabase, 'biz-1')).resolves.toBeNull();
+    });
+
+    it('returns null (not a throw) when the business row does not exist', async () => {
+      const supabase = makeSupabase({
+        businesses: makeQuery({ data: null, error: null }),
+      });
+      const { resolveBusinessContext } = await import('../tools.mjs');
+
+      await expect(resolveBusinessContext(supabase, 'biz-1')).resolves.toBeNull();
+    });
+
+    it('returns null without querying when posClient or businessId is missing', async () => {
+      const { resolveBusinessContext } = await import('../tools.mjs');
+
+      expect(await resolveBusinessContext(null, 'biz-1')).toBeNull();
+      expect(await resolveBusinessContext({}, undefined)).toBeNull();
+    });
+
+    it('propagates an abort instead of swallowing it into null', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const { resolveBusinessContext } = await import('../tools.mjs');
+
+      await expect(resolveBusinessContext({}, 'biz-1', controller.signal)).rejects.toMatchObject({
+        name: 'AbortError',
       });
     });
   });

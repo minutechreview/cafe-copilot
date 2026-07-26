@@ -109,9 +109,11 @@ export const toolConfig = {
         name: 'search_memory',
         description:
           'Search the copilot\'s long-term memory — past daily summaries and saved business ' +
-          'notes — by meaning rather than exact keywords. Use this for questions spanning ' +
-          'multiple days ("lately", "this month") or anything that sounds like it might ' +
-          'already be known from an earlier conversation or a saved note.',
+          'notes — by meaning rather than exact keywords. Use this FIRST for vague historical ' +
+          'anomaly questions such as "have we had refund problems lately?" when the user does ' +
+          'not name a date. Do not use memory as a substitute for a current operational ' +
+          'aggregate: waste, staff performance, sales, and cash questions over a relative ' +
+          'period must use the matching live POS tool after resolving the date range.',
         inputSchema: {
           json: {
             type: 'object',
@@ -314,6 +316,29 @@ async function fetchBusinessMeta(supabase, businessId, signal) {
   return data;
 }
 
+/**
+ * Resolves a trusted business-local "today" from the business's own configured locale — never
+ * from raw server UTC. This is the one safe source of a relative date ("today", "yesterday")
+ * for the system prompt: it comes from the business's own POS configuration, not a guess.
+ * Returns null (never throws) for any lookup failure, so callers can fail closed to asking the
+ * user for an explicit date. An abort/deadline signal still propagates, it is not swallowed.
+ */
+export async function resolveBusinessContext(posClient, businessId, signal) {
+  throwIfAborted(signal);
+  if (!posClient || !businessId) return null;
+  try {
+    const business = await fetchBusinessMeta(posClient, businessId, signal);
+    throwIfAborted(signal);
+    if (!business || !business.currency) return null;
+    const offset = localeOffset(business.locale_default);
+    const today = toBusinessDateKey(new Date().toISOString(), offset);
+    return { today, currency: business.currency, locale: business.locale_default || null };
+  } catch (err) {
+    if (err?.name === 'AbortError' || signal?.aborted) throw err;
+    return null;
+  }
+}
+
 async function fetchRows(query, label, signal) {
   throwIfAborted(signal);
   const { data, error } = await withAbortSignal(query, signal);
@@ -331,7 +356,12 @@ async function runGetStaffPerformance(input, ctx) {
   const sessions = await fetchRows(
     supabase
       .from('till_sessions')
-      .select('id,staff_id,closed_at,variance,staff_profiles!staff_id(name,role)')
+      // Disambiguated by FK constraint name, not column name: the POS schema now links
+      // till_sessions to staff_profiles twice — once via (business_id, staff_id) for who ran
+      // the shift, once via (business_id, closed_by) for who counted it down. Both are
+      // composite tenancy-scoped FKs, so a plain `!staff_id` column hint no longer resolves
+      // and an unhinted embed is ambiguous. We want the staff member who worked the shift.
+      .select('id,staff_id,closed_at,variance,staff_profiles!till_sessions_business_staff_fkey(name,role)')
       .eq('business_id', ctx.businessId)
       .gte('opened_at', start)
       .lt('opened_at', end),

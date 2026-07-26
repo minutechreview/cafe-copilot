@@ -9,6 +9,7 @@
     "find-model": "node scripts/find-model.mjs",
     "find-embedding-model": "node scripts/find-embedding-model.mjs",
     "backfill": "node scripts/backfill-summaries.mjs",
+    "smoke:staging": "node scripts/smoke-pos-staging.mjs",
     "bundle": "node scripts/bundle.mjs",
     "deploy-lambda": "node scripts/deploy-lambda.mjs"
   },
