@@ -455,6 +455,7 @@ describe('handler', () => {
       expect(converseInput.system[0].text).toContain("Today's business-local date is 2026-07-25");
       expect(converseInput.system[0].text).not.toContain('ask for the calendar date');
       expect(converseInput.system[0].text).toContain('never substitute a memory summary for a live aggregate');
+      expect(converseInput.system[0].text).toContain('Never invent, suggest, or list hypothetical causes');
     });
 
     it('falls back to the ask-for-a-date wording when resolution returns null', async () => {

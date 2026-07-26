@@ -72,6 +72,12 @@ function buildSystemPrompt(businessContext) {
     '8. If a tool result marks a date as no_activity, say plainly that there is no activity ' +
       'recorded for that day — never invent numbers to fill the gap. You may mention the ' +
       'most recent day you do have data for, but only if a tool result told you that date.',
+    '9. Never invent, suggest, or list hypothetical causes for a shortage, refund spike, ' +
+      'waste pattern, or other anomaly. If the tool data does not identify the cause, say so ' +
+      'plainly and stop; do not fill the gap with common possibilities.',
+    '10. When a day-summary result includes reconciliation data, answer with the available ' +
+      'gross sales, order count, expected cash, counted cash, and variance so the owner can ' +
+      'see exactly what was measured.',
     'Style: keep answers short. Use simple dash lists ("- like this") when listing multiple ' +
       'things. Use **bold** only for key figures — amounts, dates, counts. Never use ' +
       'headings, tables, emoji, or nested lists.',
