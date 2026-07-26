@@ -25,6 +25,7 @@ function withAbortSignal(query, signal) {
 }
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_MEMORY_SEARCH_RESULTS = 20;
 
 const money = (value) => Number(Number(value || 0).toFixed(2));
 
@@ -559,7 +560,8 @@ async function runGetWasteLog(input, ctx) {
 
 async function runSearchMemory(input, ctx) {
   const query = requireNonEmptyString(input?.query, 'query is required');
-  const k = Number.isFinite(input?.k) && input.k > 0 ? Math.floor(input.k) : 5;
+  const requestedK = Number.isFinite(input?.k) && input.k > 0 ? Math.floor(input.k) : 5;
+  const k = Math.min(requestedK, MAX_MEMORY_SEARCH_RESULTS);
   throwIfAborted(ctx.signal);
   const embedding = ctx.signal ? await embedText(query, { signal: ctx.signal }) : await embedText(query);
   throwIfAborted(ctx.signal);

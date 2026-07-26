@@ -12,6 +12,8 @@ const DEFAULT_CONNECTION_TIMEOUT_MS = 5_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 10_000;
 const DEFAULT_QUERY_TIMEOUT_MS = 10_000;
 const DEFAULT_STATEMENT_TIMEOUT_MS = 10_000;
+const MAX_MEMORY_SEARCH_RESULTS = 20;
+const MAX_LIST_NOTES_RESULTS = 50;
 
 function configuredPositiveInteger(name, fallback, maximum) {
   const raw = process.env[name];
@@ -312,15 +314,17 @@ export async function listNotes(principal, { signal } = {}) {
             WHERE business_id = $1
               AND created_by NOT LIKE 'demo-session-%'
               AND created_by <> 'legacy_demo'
-            ORDER BY created_at DESC`;
-    values = [p.businessId];
+            ORDER BY created_at DESC
+            LIMIT $2`;
+    values = [p.businessId, MAX_LIST_NOTES_RESULTS];
   } else {
     sql = `SELECT id, content, source, created_by, created_at
              FROM notes
             WHERE business_id = $1
               AND created_by = $2
-            ORDER BY created_at DESC`;
-    values = [p.businessId, p.actorId];
+            ORDER BY created_at DESC
+            LIMIT $3`;
+    values = [p.businessId, p.actorId, MAX_LIST_NOTES_RESULTS];
   }
   throwIfAborted(signal);
   const { rows } = await runQuery(sql, values, signal);
@@ -457,7 +461,8 @@ export async function upsertDocument(principal, input = {}, { signal } = {}) {
 export async function searchDocuments(principal, queryEmbedding, k = 5, { signal } = {}) {
   const p = normalizePrincipal(principal);
   const vectorLiteral = toVectorLiteral(queryEmbedding);
-  const numericK = Number.isFinite(k) && k > 0 ? Math.floor(k) : 5;
+  const requestedK = Number.isFinite(k) && k > 0 ? Math.floor(k) : 5;
+  const numericK = Math.min(requestedK, MAX_MEMORY_SEARCH_RESULTS);
 
   throwIfAborted(signal);
   const { rows } = await runQuery(

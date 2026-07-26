@@ -502,7 +502,8 @@ describe('memory/store.mjs & migrations', () => {
       const [sql, params] = queryMock.mock.calls[0];
       expect(sql).toContain("created_by NOT LIKE 'demo-session-%'");
       expect(sql).toContain("created_by <> 'legacy_demo'");
-      expect(params).toEqual(['biz-1']);
+      expect(sql).toContain('LIMIT $2');
+      expect(params).toEqual(['biz-1', 50]);
     });
 
     it('isolates demo note listing to the exact demo-session actor', async () => {
@@ -514,7 +515,8 @@ describe('memory/store.mjs & migrations', () => {
       expect(notes).toEqual([{ id: 'own-note', created_by: PRINCIPAL_DEMO.actorId }]);
       const [sql, params] = queryMock.mock.calls[0];
       expect(sql).toContain('created_by = $2');
-      expect(params).toEqual(['biz-1', 'demo-456']);
+      expect(sql).toContain('LIMIT $3');
+      expect(params).toEqual(['biz-1', 'demo-456', 50]);
     });
 
     it('stores separate immutable created_by identities for two demo sessions', async () => {
@@ -655,6 +657,17 @@ describe('memory/store.mjs & migrations', () => {
       const [sql, params] = queryMock.mock.calls[0];
       expect(sql).toContain('<=>');
       expect(params).toEqual(['biz-1', '[0.1,0.2]', 5]);
+    });
+
+    it('caps an oversized result count at the storage boundary', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+      const { searchDocuments } = await import('../store.mjs');
+
+      await searchDocuments(PRINCIPAL_AUTH, [0.1, 0.2], 10_000);
+
+      const [sql, params] = queryMock.mock.calls[0];
+      expect(sql).toContain('LIMIT $3');
+      expect(params).toEqual(['biz-1', '[0.1,0.2]', 20]);
     });
   });
 });

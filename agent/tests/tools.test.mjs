@@ -452,6 +452,20 @@ describe('agent/tools.mjs', () => {
         expect(searchDocumentsMock).toHaveBeenCalledWith(customPrincipal, [0.1], 2);
       });
 
+      it('caps an oversized k before querying memory', async () => {
+        embedTextMock.mockResolvedValueOnce([0.1]);
+        searchDocumentsMock.mockResolvedValueOnce([]);
+        const { executeTool } = await import('../tools.mjs');
+
+        await executeTool('search_memory', { query: 'all refund history', k: 10_000 }, CTX);
+
+        expect(searchDocumentsMock).toHaveBeenCalledWith(
+          { businessId: 'biz-1', actorId: 'legacy_demo', accessMode: 'legacy_demo' },
+          [0.1],
+          20
+        );
+      });
+
       it('rejects an empty query', async () => {
         const { executeTool } = await import('../tools.mjs');
         await expect(executeTool('search_memory', { query: '  ' }, CTX)).rejects.toThrow(
