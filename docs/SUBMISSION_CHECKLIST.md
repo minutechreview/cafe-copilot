@@ -47,9 +47,11 @@ attestation, an account action, or media only you can record and host.
 
 ### Devpost account and project
 
-- [ ] Create or confirm the Devpost account that will own this submission.
-- [ ] Create the project entry on Devpost for the CockroachDB × AWS AI Hackathon.
-- [ ] Confirm the hackathon's specific submission deadline and time zone, and submit before it.
+- [x] Confirmed the authenticated Devpost account is registered for the hackathon.
+- [x] Created the non-submitted **Cafe Copilot** project draft:
+      `https://devpost.com/software/cafe-copilot`.
+- [x] Confirmed from the live Devpost form on 2026-07-26: submissions close
+      **2026-08-18 at 5:00 PM EDT** (`2026-08-18T21:00:00Z`).
 - [ ] Fill in the project's Devpost **start date** field (placeholder left in
       `docs/SUBMISSION.md` under "Team and eligibility").
 - [ ] Add **team member(s)** to the Devpost project and to `docs/SUBMISSION.md` (placeholder
@@ -83,22 +85,19 @@ attestation, an account action, or media only you can record and host.
 
 ### Repository
 
-- [ ] Confirm the public GitHub repository URL that will be linked from Devpost, and that the
-      repository is actually public (not private/internal) by submission time.
-- [ ] Confirm `README.md` (owned by a separate agent/track in this session) reflects the same
-      corrected demo-access story used in `docs/SUBMISSION.md` and `docs/DEMO_SCRIPT.md` — i.e.
-      that the authenticated POS-embedded widget is the supported demo path, not a public
-      no-login page — before linking the repo from Devpost.
-- [ ] Confirm the license file and any third-party attributions are accurate and complete.
+- [x] Confirmed `https://github.com/minutechreview/cafe-copilot` is public and linked from the
+      Devpost draft.
+- [x] Confirmed `README.md`, `docs/SUBMISSION.md`, and `docs/DEMO_SCRIPT.md` consistently use
+      the authenticated POS-embedded widget as the supported demo path.
+- [x] Confirmed the repository contains an MIT `LICENSE` and GitHub detects it as MIT.
 
 ### Hackathon-specific fields
 
-- [ ] Review the CockroachDB × AWS AI Hackathon's Devpost rules page in full and fill in any
-      required field not explicitly listed above (e.g. a specific "which sponsor tools did you
-      use" checklist, a required tags/category selection, or a specific prize-track opt-in).
-- [ ] If the hackathon requires confirmation of which two CockroachDB tools were used, confirm
-      the submission form's tool-selection field matches what's written in `docs/SUBMISSION.md`
-      (Distributed Vector Indexing; Cloud Managed MCP Server).
+- [x] Reviewed the live Devpost submission requirements and judging criteria on 2026-07-26.
+      Required technical fields are functional demo URL, public repository URL, license URL,
+      two CockroachDB tools, at least one AWS service, and a meaningful-integration explanation.
+- [x] The two evidenced CockroachDB tools in the submission are **Distributed Vector Indexing**
+      and **Agent Skills Repo**. The AWS selections are **Amazon Bedrock** and **AWS Lambda**.
 - [ ] If AWS credits, sandbox accounts, or a specific AWS account id must be disclosed to the
       judges, supply that separately from the public Devpost text (do not put an AWS account id
       in `docs/SUBMISSION.md`).

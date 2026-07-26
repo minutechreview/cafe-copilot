@@ -111,7 +111,11 @@ SELECT id, doc_type, doc_date, content, metadata, embedding <=> $2 AS distance
 ### The two required CockroachDB tools
 
 1. **Distributed Vector Indexing** — semantic recall over the daily summaries. Titan Text Embeddings v2 embeds each summary and every incoming `search_memory` query; CockroachDB's native `VECTOR` column and `CREATE VECTOR INDEX` do the nearest-neighbor search with the cosine operator (`<=>`) — no separate vector database, no reindexing pipeline. This is the same mechanism the live demo uses when someone asks "have we had problems with refunds lately?" — the agent has no date to search on, so it searches memory by meaning and gets back the flagged refund-spike summary.
-2. **Cloud Managed MCP Server** — connected directly during development for agent-to-cluster work: read-only mode, fully audited, worked natively inside the coding agent while designing and iterating on the schema and vector index against the live cluster.
+2. **CockroachDB Agent Skills Repo** — the official `cockroachdb-sql` Agent Skill was applied
+   during the release audit to the memory schema, migrations, and query layer. Its distributed
+   SQL rules verified explicit UUID primary keys, fixed-width vectors, tenant predicates, atomic
+   conflict handling, and bounded retrieval; the resulting evidence and follow-ups are recorded
+   in [`docs/COCKROACHDB_SKILL_AUDIT.md`](docs/COCKROACHDB_SKILL_AUDIT.md).
 
 ## AWS services used
 

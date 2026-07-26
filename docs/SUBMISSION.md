@@ -64,10 +64,11 @@ CockroachDB cluster, spanning tables `conversations`, `messages`, `notes`, `draf
    same mechanism is what lets the agent answer "have we had any problems with refunds lately?"
    by retrieving the flagged refund-spike summary without the owner naming the date — the
    flagship CockroachDB moment in the demo.
-2. **Cloud Managed MCP Server** — connected directly during development (read-only, fully
-   audited) for agent-to-cluster work while iterating on the schema and the vector index against
-   the live cluster, without a bespoke client or a separate DB driver setup in the coding
-   session.
+2. **CockroachDB Agent Skills Repo** — we applied the official `cockroachdb-sql` skill to the
+   memory schema, migrations, and query layer during the release audit. Its CockroachDB-specific
+   rules checked UUID primary keys, fixed-width vectors, tenant-scoped queries, atomic conflict
+   handling, distributed-read bounds, and the need for `EXPLAIN` validation before scaling. The
+   versioned findings are in `docs/COCKROACHDB_SKILL_AUDIT.md`.
 
 As a bonus, `ops/crdb-health.mjs` is a small, unit-tested, read-only CockroachDB Cloud health
 probe over the `ccloud` CLI (noun-verb syntax, JSON output) — wired and tested, optional at
@@ -205,7 +206,7 @@ manager dashboard, talking to the Lambda Function URL over SSE.
 ## Built with
 
 React, Vite, Node.js, AWS Lambda, Amazon Bedrock (Claude Sonnet 4.5, Titan Text Embeddings v2),
-CockroachDB, CockroachDB Vector Index, CockroachDB Cloud Managed MCP Server, Supabase
+CockroachDB, CockroachDB Vector Index, CockroachDB Agent Skills Repo, Supabase
 (PostgreSQL, Auth, Row-Level Security), Cloudflare Pages, esbuild, Server-Sent Events.
 
 ## CockroachDB AI tools feedback (optional)
@@ -220,9 +221,11 @@ CockroachDB, CockroachDB Vector Index, CockroachDB Cloud Managed MCP Server, Sup
   three live against the cluster rather than from a single canonical reference page stating
   CockroachDB supports the full pgvector operator set — worth surfacing more prominently for
   anyone arriving from a Postgres/pgvector background.
-- **MCP server setup was genuinely smooth.** Connecting the Cloud Managed MCP Server into the
-  coding agent took a single config snippet and worked immediately in read-only/audited mode —
-  this was the best first-five-minutes experience of any of the CockroachDB tooling we touched.
+- **The Agent Skills rules made the release review concrete.** The `cockroachdb-sql` skill
+  turned broad distributed-database advice into a repeatable checklist covering keys, types,
+  indexes, atomic writes, bounded reads, and execution-plan validation. A useful improvement
+  would be a purpose-built vector-search review skill that explains tenant-filtered ANN plan
+  tradeoffs and recommended `EXPLAIN` evidence.
 
 ## Team and eligibility
 
