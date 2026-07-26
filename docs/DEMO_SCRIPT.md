@@ -10,22 +10,9 @@ POS manager dashboard (per `docs/RUNBOOK.md` section 1). It is not the standalon
 `cafe-copilot.pages.dev` build, which is not on the deployed backend's allowed-origin list as of
 this writing and will return `403 Origin is not allowed.` if used.
 
-> ## Before you demo: a redeploy is required
->
-> The expected answers below were verified end to end against real Bedrock, POS staging, and
-> CockroachDB — but they were verified against **locally running agent code**, not the currently
-> deployed Lambda. The deployed function still runs the bundle built on 2026-07-24, which
-> predates two fixes made during the release-readiness pass:
->
-> - **Relative-date questions.** Step 2 ("Have we had any problems with refunds lately?") and any
->   "today"/"yesterday"/"this month" question will ask you for an explicit calendar date instead
->   of answering. Step 2 is the flagship CockroachDB moment, so this matters.
-> - **Staff performance.** Step 3 will fail with a technical-issue message, because a POS schema
->   migration changed the `till_sessions` → `staff_profiles` foreign keys.
->
-> Run the deploy in `docs/RUNBOOK.md` section 3 (bundle, then deploy), then re-run this script
-> to confirm, **before** recording the video or sending anything to judges. Steps 1, 4, 5 and 6
-> work on the currently deployed function; steps 2 and 3 do not.
+The release candidate was deployed and this journey was rerun successfully against the real
+staging widget on 2026-07-26. Recheck it immediately before recording because external model,
+database, and account state can still change.
 
 ## Setup
 

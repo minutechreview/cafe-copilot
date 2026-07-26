@@ -31,16 +31,14 @@ actions, and media the owner must record/host).
       is left as an explicit `[OWNER TO SUPPLY: ...]` placeholder rather than answered on the
       owner's behalf (full list in the report accompanying this task).
 
-## Blocking: deploy before demoing or recording
+## Deployment and live verification
 
-- [ ] **Rebuild and redeploy the agent Lambda** (`docs/RUNBOOK.md` section 3). The deployed
-      function still runs the 2026-07-24 bundle, which predates two fixes verified locally during
-      the release-readiness pass: business-local relative-date handling, and the
-      `till_sessions` → `staff_profiles` foreign-key change that currently breaks
-      `get_staff_performance`. Until this is done, steps 2 and 3 of `docs/DEMO_SCRIPT.md` fail —
-      including the flagship CockroachDB vector-search moment.
-- [ ] **Re-run `docs/DEMO_SCRIPT.md` end to end against the redeployed function** and confirm each
-      expected figure, before recording the video or sharing anything with judges.
+- [x] **Rebuilt and redeployed the agent Lambda** on 2026-07-26 with business-local date
+      handling, the corrected staff relationship, and anti-speculation prompt rules.
+- [x] **Re-ran the core demo journey against the embedded staging widget**: cash reconciliation,
+      refund vector-memory retrieval, staff performance, waste, purchase-order draft, and
+      conversation recall after a hard reload all passed. The authenticated PostgREST
+      relationship smoke, 202 tests, lint, and production build also passed.
 
 ## Requires the project owner
 

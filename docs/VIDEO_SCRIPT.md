@@ -9,10 +9,8 @@ this writing and will 403. Type at a natural pace — don't rush the typing, but
 while the model is still streaming if a response runs long. Voice is plain and warm, like the
 copilot itself: no jargon, no hype words.
 
-**Deploy first.** Section 3's refunds question depends on a fix that is not yet on the deployed
-Lambda — against the currently deployed function it will ask you for a date range instead of
-retrieving the spike, which would lose the single most important beat in this video. Redeploy per
-`docs/RUNBOOK.md` section 3 and re-run `docs/DEMO_SCRIPT.md` before you record.
+The 2026-07-26 release is deployed and the full script has been verified against the staging
+widget. Do one final rehearsal immediately before recording.
 
 ## Section budget (totals exactly 3:00)
 

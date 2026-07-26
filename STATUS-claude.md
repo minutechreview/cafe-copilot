@@ -259,3 +259,25 @@ recording — steps 2 and 3 of docs/DEMO_SCRIPT.md fail on the currently deploye
 Known gap worth a contract decision: Café Copilot reads a schema owned by Project POS, which is
 actively migrating, and nothing in the suite would catch the next such break because the POS
 client is mocked everywhere — a thin staging smoke test over the real embeds would close it.
+
+## 2026-07-26 — release candidate deployed and live journey verified
+
+The reviewed release candidate was committed in `8ba87ba`, followed by the live-QA
+anti-speculation correction in `5ba26ea`. The previously public staging demo password was
+rotated and is now stored only in gitignored operator configuration; committed password/PIN
+fallbacks were removed from the seed, sync, and backfill scripts and public credentials were
+removed from judge-facing documentation.
+
+Verification passed: authenticated staging relationship smoke, 202 unit tests, repository
+lint, production web build, and diff checks. The Lambda was rebuilt and deployed with
+nodejs22.x, reserved concurrency restored to 2, demo mode disabled, and CORS restricted to the
+two Project POS origins. The embedded authenticated widget then passed cash reconciliation,
+refund vector-memory retrieval, staff performance, waste aggregation, review-only
+purchase-order drafting, and conversation recall after a hard browser reload. A 390px viewport
+check showed no horizontal overflow.
+
+Remaining owner-only actions are the personal Devpost attestations, recording/uploading the
+video, privately supplying demo access if desired, and authorizing the final public push and
+submission. `ccloud` is not installed/authenticated on this machine, so the optional
+credential-bearing health probe remains owner-operated; it is not required for the working
+runtime.
