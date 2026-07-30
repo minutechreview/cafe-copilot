@@ -238,7 +238,9 @@ async function resolveToolUses(content, ctx) {
       results.push({
         toolResult: {
           toolUseId,
-          content: [{ json: { error: err?.message ?? 'Tool call failed' } }],
+          // Driver details stay in the server log above. The model receives only a stable,
+          // schema-free failure so table/column names cannot be repeated to the user.
+          content: [{ json: { error: 'The requested business data could not be retrieved.' } }],
           status: 'error',
         },
       });

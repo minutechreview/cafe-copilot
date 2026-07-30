@@ -199,7 +199,7 @@ npm run lint
 npm run build
 ```
 
-`npm test` runs 202 tests across three workspaces (agent 145, memory 42, web 15). `npm run lint` and `npm run build` are both clean as of this writing.
+`npm test` runs the complete test suites across the agent, memory, and web workspaces. `npm run lint` and `npm run build` verify code quality and the production bundle.
 
 ```bash
 npm run memory:verify

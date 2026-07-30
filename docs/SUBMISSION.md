@@ -144,7 +144,7 @@ manager dashboard, talking to the Lambda Function URL over SSE.
 - Real authorization, not a demo-mode shortcut: the authenticated path checks a live Supabase
   JWT and an active owner/manager membership row before answering anything, and every POS read
   is scoped to the caller's own session.
-- 202 passing tests across the three workspaces (agent, memory, web), a clean lint pass, and a
+- Passing tests across all three workspaces (agent, memory, web), a clean lint pass, and a
   clean production build, plus the FK-ambiguity fix above, which came with a new regression test
   specifically so the failure mode it caught can't silently return.
 

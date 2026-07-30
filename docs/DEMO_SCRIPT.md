@@ -97,17 +97,16 @@ the wrong person, re-check that the question and seed data still match the range
 
 ### 4. Waste
 
-**Ask:** `What are we wasting the most of this month?`
+**Ask:** `What did we waste the most between July 1st and July 12th 2026?`
 
 **Proves:** `get_waste_log` — a live query against the waste/comp log, grouped by reason and by
 item.
 
-**Expect:** **LKR 3,650** across **4 items** this month — **damaged: LKR 2,150**, **quality
+**Expect:** **LKR 3,650** across **4 items** in that date range — **damaged: LKR 2,150**, **quality
 issue: LKR 1,500**.
 
-**If it misbehaves:** if the total doesn't match, confirm "this month" resolved against the
-business-local date the agent reported earlier in the conversation, not a different calendar
-month than the seeded range covers.
+**If it misbehaves:** confirm the tool queried the explicit seeded range above. Avoid relative
+phrasing such as "this month" because the demo history is intentionally fixed in July 2026.
 
 ### 5. Memory: save a note, then recall it
 

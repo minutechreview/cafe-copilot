@@ -303,7 +303,7 @@ describe('handler', () => {
       const secondInput = sendMock.mock.calls[1][0].input;
       expect(secondInput.messages[2].content[0].toolResult).toEqual({
         toolUseId: 'call-1',
-        content: [{ json: { error: 'POS staging authentication failed' } }],
+        content: [{ json: { error: 'The requested business data could not be retrieved.' } }],
         status: 'error',
       });
     });

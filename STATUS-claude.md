@@ -167,7 +167,7 @@ lambda:PutFunctionConcurrency), all with the same shape: "not authorized to perf
 resource: Y because no identity-based policy allows the X action." Retested iam:GetRole after
 a 20s wait in case of propagation lag — same denial, so this isn't an eventual-consistency
 issue. sts:GetCallerIdentity confirms the credentials are for the right user
-(arn:aws:iam::606065959230:user/cafe-copilot-dev) and Bedrock calls through the exact same
+(the dedicated `cafe-copilot-dev` IAM user) and Bedrock calls through the exact same
 credentials work fine (proven by the smoke test above), so this is specific to whatever
 policy was meant to grant Lambda/IAM access — it does not appear to be attached, or doesn't
 include these actions. Did not attempt to work around this (no privilege escalation, no

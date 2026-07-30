@@ -166,7 +166,10 @@ describe('agent/tools.mjs', () => {
       it('rejects a malformed date without querying POS staging', async () => {
         const { executeTool } = await import('../tools.mjs');
         await expect(executeTool('get_day_summary', { date: 'not-a-date' }, CTX)).rejects.toThrow(
-          'date must be in YYYY-MM-DD format'
+          'date must be a real calendar date in YYYY-MM-DD format'
+        );
+        await expect(executeTool('get_day_summary', { date: '2026-02-30' }, CTX)).rejects.toThrow(
+          'date must be a real calendar date in YYYY-MM-DD format'
         );
       });
     });
@@ -306,6 +309,12 @@ describe('agent/tools.mjs', () => {
         await expect(
           executeTool('get_staff_performance', { start_date: 'nope', end_date: '2026-07-01' }, CTX)
         ).rejects.toThrow('start_date must be in YYYY-MM-DD format');
+        await expect(
+          executeTool('get_staff_performance', { start_date: '2026-02-30', end_date: '2026-03-01' }, CTX)
+        ).rejects.toThrow('start_date and end_date must be real calendar dates');
+        await expect(
+          executeTool('get_staff_performance', { start_date: '2026-01-01', end_date: '2026-04-03' }, CTX)
+        ).rejects.toThrow('date range must not exceed 92 days');
       });
     });
 
@@ -421,6 +430,9 @@ describe('agent/tools.mjs', () => {
         await expect(
           executeTool('get_waste_log', { start_date: '2026-07-01', end_date: 'nope' }, CTX)
         ).rejects.toThrow('end_date must be in YYYY-MM-DD format');
+        await expect(
+          executeTool('get_waste_log', { start_date: '2026-01-01', end_date: '2026-04-03' }, CTX)
+        ).rejects.toThrow('date range must not exceed 92 days');
       });
     });
 

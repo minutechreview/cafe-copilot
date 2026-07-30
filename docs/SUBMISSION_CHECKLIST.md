@@ -38,7 +38,7 @@ actions, and media the owner must record/host).
 - [x] **Re-ran the core demo journey against the embedded staging widget**: cash reconciliation,
       refund vector-memory retrieval, staff performance, waste, purchase-order draft, and
       conversation recall after a hard reload all passed. The authenticated PostgREST
-      relationship smoke, 202 tests, lint, and production build also passed.
+      relationship smoke, the complete test suite, lint, and production build also passed.
 
 ## Requires the project owner
 

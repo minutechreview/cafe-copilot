@@ -26,6 +26,7 @@ function withAbortSignal(query, signal) {
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_MEMORY_SEARCH_RESULTS = 20;
+const MAX_OPERATIONAL_RANGE_DAYS = 92;
 
 const money = (value) => Number(Number(value || 0).toFixed(2));
 
@@ -39,6 +40,12 @@ const WASTE_REASON_LABELS = {
   damaged: 'Damaged',
   quality: 'Quality issue',
 };
+
+function isRealCalendarDate(value) {
+  if (typeof value !== 'string' || !DATE_PATTERN.test(value)) return false;
+  const timestamp = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value;
+}
 
 export const toolConfig = {
   tools: [
@@ -77,8 +84,8 @@ export const toolConfig = {
           json: {
             type: 'object',
             properties: {
-              start_date: { type: 'string', description: 'Start of the range, YYYY-MM-DD, inclusive.' },
-              end_date: { type: 'string', description: 'End of the range, YYYY-MM-DD, inclusive.' },
+              start_date: { type: 'string', description: 'Start of the range, YYYY-MM-DD, inclusive. Maximum range: 92 days.' },
+              end_date: { type: 'string', description: 'End of the range, YYYY-MM-DD, inclusive. Maximum range: 92 days.' },
             },
             required: ['start_date', 'end_date'],
           },
@@ -97,8 +104,8 @@ export const toolConfig = {
           json: {
             type: 'object',
             properties: {
-              start_date: { type: 'string', description: 'Start of the range, YYYY-MM-DD, inclusive.' },
-              end_date: { type: 'string', description: 'End of the range, YYYY-MM-DD, inclusive.' },
+              start_date: { type: 'string', description: 'Start of the range, YYYY-MM-DD, inclusive. Maximum range: 92 days.' },
+              end_date: { type: 'string', description: 'End of the range, YYYY-MM-DD, inclusive. Maximum range: 92 days.' },
             },
             required: ['start_date', 'end_date'],
           },
@@ -225,8 +232,8 @@ function resolvePrincipal(ctx) {
 
 async function runGetDaySummary(input, ctx) {
   const date = input?.date;
-  if (typeof date !== 'string' || !DATE_PATTERN.test(date)) {
-    throw new Error('date must be in YYYY-MM-DD format');
+  if (!isRealCalendarDate(date)) {
+    throw new Error('date must be a real calendar date in YYYY-MM-DD format');
   }
   const supabase = getRequiredPosClient(ctx);
   throwIfAborted(ctx.signal);
@@ -265,6 +272,15 @@ function validateDateRange(input) {
   }
   if (endDate < startDate) {
     throw new Error('end_date must not be before start_date');
+  }
+  if (!isRealCalendarDate(startDate) || !isRealCalendarDate(endDate)) {
+    throw new Error('start_date and end_date must be real calendar dates');
+  }
+  const startTimestamp = Date.parse(`${startDate}T00:00:00Z`);
+  const endTimestamp = Date.parse(`${endDate}T00:00:00Z`);
+  const rangeDays = Math.floor((endTimestamp - startTimestamp) / 86_400_000) + 1;
+  if (rangeDays > MAX_OPERATIONAL_RANGE_DAYS) {
+    throw new Error(`date range must not exceed ${MAX_OPERATIONAL_RANGE_DAYS} days`);
   }
   return { startDate, endDate };
 }
