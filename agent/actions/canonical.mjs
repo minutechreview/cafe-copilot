@@ -65,7 +65,44 @@ export function canonicalizeJcs(value) {
 }
 
 export function canonicalSha256(value) {
-  return createHash('sha256').update(canonicalizeJcs(value), 'utf8').digest('hex');
+  return createHash('sha256').update(canonicalizeActionPayload(value) ?? canonicalizeJcs(value), 'utf8').digest('hex');
+}
+
+/*
+ * POS cannot safely reproduce arbitrary JSON/JCS from jsonb.  The action
+ * boundary is consequently a small typed wire format: only a recognised,
+ * closed payload shape is encoded here.  Keep the order below in lock-step
+ * with migration 26; all other values retain ordinary RFC 8785 encoding.
+ */
+export function canonicalizeActionPayload(actionOrValue, maybeValue) {
+  const action = typeof actionOrValue === 'string' ? actionOrValue : null;
+  const value = action ? maybeValue : actionOrValue;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const undoTarget = (kind, id, fields) => `{\"targetKind\":${canonicalizeJcs(kind)},\"targetId\":${canonicalizeJcs(id)},${fields},\"parentActionId\":${canonicalizeJcs(value.parentActionId ?? value.originalActionId)}}`;
+  if (action === 'menu.availability.undo') return undoTarget('menu_item', value.targetId, `\"available\":${canonicalizeJcs(value.restoreAvailable)},\"expectedRevision\":${canonicalizeJcs(value.expectedRevision)}`);
+  if (action === 'menu.price.undo') return undoTarget('menu_item', value.targetId, `\"price\":${canonicalizeJcs(value.restorePrice)},\"expectedRevision\":${canonicalizeJcs(value.expectedRevision)}`);
+  if (action === 'ingredient.availability.undo') return undoTarget('inventory_item', value.targetId, `\"availability\":${canonicalizeJcs(value.restoreAvailability)},\"reason\":\"undo\",\"expectedRevision\":${canonicalizeJcs(value.expectedRevision)},\"recipeImpactHash\":${canonicalizeJcs(value.expectedImpactHash)}`);
+  if (action === 'stock.count.undo') return undoTarget('inventory_item', value.targetId, `\"value\":${canonicalizeJcs(value.restoreCountedQty)},\"reason\":${canonicalizeJcs(value.reason)}`);
+  if (action === 'purchase_order.draft.undo') return undoTarget('purchase_order', value.targetId, `\"value\":${canonicalizeJcs(String(value.expectedRevision))},\"reason\":\"undo\"`);
+  if (action === 'waste.reverse') return undoTarget('waste_log', value.targetId, `\"value\":\"reverse\",\"reason\":${canonicalizeJcs(value.reason)}`);
+  if (action === 'cash.paid_in_out.reverse') return undoTarget('paid_in_out_event', value.targetId, `\"value\":\"reverse\",\"reason\":${canonicalizeJcs(value.reason)}`);
+  const keys = (names) => Object.keys(value).every((key) => names.includes(key)) && names.every((key) => Object.hasOwn(value, key));
+  const pick = (names) => `{${names.map((name) => `${JSON.stringify(name)}:${canonicalizeJcs(value[name])}`).join(',')}}`;
+  if (keys(['targetKind', 'targetId', 'available', 'expectedRevision'])) return pick(['targetKind', 'targetId', 'available', 'expectedRevision']);
+  if (keys(['targetKind', 'targetId', 'price', 'expectedRevision', 'currency'])) return pick(['targetKind', 'targetId', 'price', 'expectedRevision']);
+  if (keys(['targetKind', 'targetId', 'availability', 'reason', 'recipeImpactHash', 'expectedRevision'])) return pick(['targetKind', 'targetId', 'availability', 'reason', 'expectedRevision', 'recipeImpactHash']);
+  if (keys(['targetKind', 'targetId', 'targetUnit', 'quantity', 'reason', 'expectedRevision'])) return pick(['targetKind', 'targetId', 'targetUnit', 'quantity', 'reason']);
+  if (keys(['targetKind', 'targetId', 'expectedOpen', 'direction', 'amount', 'currency', 'reason'])) return pick(['targetKind', 'targetId', 'direction', 'amount', 'reason']);
+  if (keys(['targetKind', 'targetId', 'count', 'reason', 'expectedRevision'])) return pick(['targetKind', 'targetId', 'count', 'expectedRevision', 'reason']);
+  if (keys(['targetKind', 'targetId', 'expectedRevision'])) return pick(['targetKind', 'targetId', 'expectedRevision']);
+  if (keys(['supplierId', 'lines', 'snapshotHash']) && Array.isArray(value.lines)) {
+    const lines = value.lines.map((line) => {
+      if (!line || typeof line !== 'object' || Array.isArray(line) || !['inventoryItemId', 'quantity', 'unit', 'itemRevision'].every((key) => Object.hasOwn(line, key)) || Object.keys(line).some((key) => !['inventoryItemId', 'quantity', 'unit', 'itemRevision'].includes(key))) return null;
+      return `{\"inventoryItemId\":${canonicalizeJcs(line.inventoryItemId)},\"quantity\":${canonicalizeJcs(line.quantity)},\"unit\":${canonicalizeJcs(line.unit)},\"itemRevision\":${canonicalizeJcs(line.itemRevision)}}`;
+    });
+    if (lines.every(Boolean)) return `{\"supplierId\":${canonicalizeJcs(value.supplierId)},\"lines\":[${lines.join(',')}],\"snapshotHash\":${canonicalizeJcs(value.snapshotHash)}}`;
+  }
+  return null;
 }
 
 export function sha256(value) {

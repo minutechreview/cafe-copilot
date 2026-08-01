@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   ACTION_REGISTRY,
   ActionValidationError,
   canonicalSha256,
+  canonicalizeActionPayload,
   canonicalizeJcs,
   decodeBase64url,
   encodeActionPayload,
@@ -67,6 +69,25 @@ describe('approved action registry', () => {
     expect(canonicalSha256({ b: ['x', 0], a: 'é' })).toBe(canonicalSha256({ a: 'é', b: ['x', -0] }));
   });
 
+  it('has fixed SQL-compatible byte vectors for every POS action family', () => {
+    const vectors = [
+      [{ targetKind: 'menu_item', targetId: ITEM_ID, available: false, expectedRevision: 7 }, `{"targetKind":"menu_item","targetId":"${ITEM_ID}","available":false,"expectedRevision":7}`],
+      [{ targetKind: 'menu_item', targetId: ITEM_ID, price: '1.250', expectedRevision: 7, currency: 'KWD' }, `{"targetKind":"menu_item","targetId":"${ITEM_ID}","price":"1.250","expectedRevision":7}`],
+      [{ targetKind: 'inventory_item', targetId: ITEM_ID, availability: 'unavailable', reason: 'Delivery delayed', expectedRevision: 7, recipeImpactHash: 'a'.repeat(64) }, `{"targetKind":"inventory_item","targetId":"${ITEM_ID}","availability":"unavailable","reason":"Delivery delayed","expectedRevision":7,"recipeImpactHash":"${'a'.repeat(64)}"}`],
+      [{ targetKind: 'menu_item', targetId: ITEM_ID, targetUnit: 'item', quantity: '2.500', reason: 'Quality issue', expectedRevision: 7 }, `{"targetKind":"menu_item","targetId":"${ITEM_ID}","targetUnit":"item","quantity":"2.500","reason":"Quality issue"}`],
+      [{ targetKind: 'till_session', targetId: ITEM_ID, expectedOpen: true, direction: 'out', amount: '5.000', currency: 'KWD', reason: 'Courier float' }, `{"targetKind":"till_session","targetId":"${ITEM_ID}","direction":"out","amount":"5.000","reason":"Courier float"}`],
+      [{ targetKind: 'inventory_item', targetId: ITEM_ID, count: '8.500', expectedRevision: 7, reason: 'Physical count' }, `{"targetKind":"inventory_item","targetId":"${ITEM_ID}","count":"8.500","expectedRevision":7,"reason":"Physical count"}`],
+      [{ supplierId: ITEM_ID, lines: [{ inventoryItemId: ITEM_ID, quantity: '2.500', unit: 'L', itemRevision: 7 }], snapshotHash: 'b'.repeat(64) }, `{"supplierId":"${ITEM_ID}","lines":[{"inventoryItemId":"${ITEM_ID}","quantity":"2.500","unit":"L","itemRevision":7}],"snapshotHash":"${'b'.repeat(64)}"}`],
+      [{ targetKind: 'purchase_order', targetId: ITEM_ID, expectedRevision: 7 }, `{"targetKind":"purchase_order","targetId":"${ITEM_ID}","expectedRevision":7}`],
+    ];
+    for (const [payload, expected] of vectors) expect(canonicalizeActionPayload(payload)).toBe(expected);
+  });
+
+  it('preserves the signed PO item revision in the trusted RPC payload', () => {
+    const runtime = readFileSync(new URL('../actions/runtime.mjs', import.meta.url), 'utf8');
+    expect(runtime).toContain('item_revision: x.itemRevision');
+  });
+
   it('matches JCS number vectors and rejects lone surrogates/noncanonical base64url', () => {
     expect(canonicalizeJcs([333333333.33333329, 1E30, 4.50, 2e-3, 1e-27])).toBe('[333333333.3333333,1e+30,4.5,0.002,1e-27]');
     expect(() => canonicalizeJcs('\ud800')).toThrow('lone surrogates');
@@ -111,6 +132,13 @@ describe('approved action registry', () => {
     const [body, signature] = token.split('.');
     const tampered = `${body.slice(0, -1)}${body.endsWith('A') ? 'B' : 'A'}.${signature}`;
     expect(() => verifyCapability(tampered, { key: Buffer.alloc(32, 9), allowedKids: ['test-key'], now: new Date('2026-08-01T12:00:01.000Z') })).toThrow();
+  });
+
+  it('matches the cross-repository capability JCS/HMAC known-answer vector', () => {
+    const expectedBody = 'eyJhY3Rpb24iOiJtZW51LnByaWNlLnNldCIsImFjdGlvbklkIjoiNDQ0NDQ0NDQtNDQ0NC00NDQ0LTg0NDQtNDQ0NDQ0NDQ0NDQ0IiwiYWN0b3JVc2VySWQiOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJidXNpbmVzc0lkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwiZXhwaXJlc0F0IjoiMjAyNi0wOC0wMVQxMjowMDozMFoiLCJpc3N1ZWRBdCI6IjIwMjYtMDgtMDFUMTI6MDA6MDBaIiwianRpIjoiNTU1NTU1NTUtNTU1NS00NTU1LTg1NTUtNTU1NTU1NTU1NTU1Iiwia2lkIjoidGVzdC1rZXkiLCJwYXJlbnRBY3Rpb25JZCI6bnVsbCwicGF5bG9hZEhhc2giOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwicG9saWN5VmVyc2lvbiI6NCwicHJvcG9zYWxJZCI6IjQ0NDQ0NDQ0LTQ0NDQtNDQ0NC04NDQ0LTQ0NDQ0NDQ0NDQ0NCIsInYiOjF9';
+    const expectedSignature = 'Cv9g93GNjCK8wSv5bnOW8NUqS0Lt5Xaq0YnucSnLaRQ';
+    const token = signCapability({ kid: 'test-key', jti: '55555555-5555-4555-8555-555555555555', actionId: PROPOSAL_ID, proposalId: PROPOSAL_ID, parentActionId: null, action: 'menu.price.set', businessId: BUSINESS_ID, actorUserId: ACTOR_ID, payloadHash: 'a'.repeat(64), policyVersion: 4, issuedAt: '2026-08-01T12:00:00Z', expiresAt: '2026-08-01T12:00:30Z' }, { key: Buffer.alloc(32, 9) });
+    expect(token).toBe(`${expectedBody}.${expectedSignature}`);
   });
 
   it('reuses stable operation identity and atomically rotates the nonce on a lost-response retry', async () => {

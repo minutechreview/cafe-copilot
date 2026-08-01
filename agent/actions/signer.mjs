@@ -43,8 +43,10 @@ function assertClaims(claims) {
 
 /** Server-only signer. Its return value is for a trusted executor-to-POS request, never SSE/tool output. */
 export function signCapability(claims, { env = process.env, key, now = new Date(), maxLifetimeMs = 30_000 } = {}) {
-  const issuedAt = claims?.issuedAt ?? now.toISOString();
-  const expiresAt = claims?.expiresAt ?? new Date(now.getTime() + maxLifetimeMs).toISOString();
+  // SQL's fixed canonical verifier encodes UTC RFC3339 timestamps to whole seconds.
+  const second = (value) => new Date(value).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const issuedAt = claims?.issuedAt ?? second(now);
+  const expiresAt = claims?.expiresAt ?? second(new Date(now.getTime() + maxLifetimeMs));
   const complete = { ...claims, v: 1, kid: claims?.kid ?? env.COPILOT_CAPABILITY_KID, jti: claims?.jti ?? randomUUID(), issuedAt, expiresAt };
   assertClaims(complete);
   if (Date.parse(expiresAt) - Date.parse(issuedAt) > maxLifetimeMs) throw new Error('capability lifetime exceeds 30 seconds');

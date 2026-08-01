@@ -139,7 +139,7 @@ export async function resolveAuthContext(input = {}, options = {}) {
   }
 
   if (normalizedMode === 'authenticated') {
-    if (!businessId || typeof businessId !== 'string' || businessId.trim() === '') {
+    if ((!businessId || typeof businessId !== 'string' || businessId.trim() === '') && !options.allowUnscopedAuthenticatedActor) {
       throw new AuthContextError('businessId is required in authenticated mode.', 400);
     }
 
@@ -197,6 +197,13 @@ export async function resolveAuthContext(input = {}, options = {}) {
     }
 
     const userId = userData.user.id;
+
+    // Action recovery first authenticates the JWT actor, then obtains the proposal's tenant
+    // from a principal-bound store lookup and performs the normal scoped membership check.
+    // This is intentionally opt-in: ordinary chat/auth flows retain their explicit business ID.
+    if ((!businessId || typeof businessId !== 'string' || businessId.trim() === '') && options.allowUnscopedAuthenticatedActor) {
+      return { mode: 'authenticated', userId, businessId: null, accessToken: token };
+    }
 
     let memberships;
     try {

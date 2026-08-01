@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
+import { canonicalizeActionPayload } from '../../agent/actions/canonical.mjs';
 
 const queryMock = vi.fn();
 const clientQueryMock = vi.fn();
@@ -37,6 +38,19 @@ function proposedRow(overrides = {}) {
 }
 
 describe('approval-gated action memory', () => {
+  it('matches SQL known-answer hashes for every undo/reversal family', () => {
+    const id = PROPOSAL_ID; const parentActionId = LEASE_ID; const impact = 'a'.repeat(64);
+    const vectors = [
+      ['menu.availability.undo', { targetId: id, restoreAvailable: true, expectedRevision: 8, parentActionId }, 'b9ca0600fbfa272c1f8f24af5bdf65c3d3ca789549d6a9397fb0d82086e74102'],
+      ['menu.price.undo', { targetId: id, restorePrice: '1.250', expectedRevision: 8, parentActionId }, '1c668bc6b283bb393c75df0367249a64bcdb6c6e2abc899d18aeb6f30ffe54af'],
+      ['ingredient.availability.undo', { targetId: id, restoreAvailability: 'available', expectedRevision: 8, expectedImpactHash: impact, parentActionId }, '109fe3681012b86cb9d5523461f0f9d29522eb3447345173b7a2c9bba6eb208b'],
+      ['stock.count.undo', { targetId: id, restoreCountedQty: '8.500', reason: 'Undo stock count', expectedRevision: 8, parentActionId }, '8c2a97c0eb15fbdb9609da3f95407a642b7ff9d3733818e81a44245a797e3cd1'],
+      ['waste.reverse', { targetId: id, reason: 'Undo waste record', originalActionId: parentActionId }, '216ca2c3531e16a699bcf40cdc1e7aea42d8198d3e220928637ed08bd74f9832'],
+      ['cash.paid_in_out.reverse', { targetId: id, reason: 'Undo cash record', originalActionId: parentActionId }, '89ce2c77dc2f08d477f4b082520edb14ec71cbe9ef1e4464313f7b432664f145'],
+      ['purchase_order.draft.undo', { targetId: id, expectedRevision: 8, parentActionId }, 'f08c13243667df320e7111db62a0a639a3e9b9cabc63541ef0f553d8fc2ef6b2'],
+    ];
+    for (const [action, payload, hash] of vectors) expect(createHash('sha256').update(canonicalizeActionPayload(action, payload)).digest('hex')).toBe(hash);
+  });
   beforeEach(() => {
     vi.resetModules();
     queryMock.mockReset(); clientQueryMock.mockReset(); releaseMock.mockReset(); connectMock.mockReset(); PoolMock.mockClear();
@@ -89,6 +103,35 @@ describe('approval-gated action memory', () => {
     expect(result.created).toBe(false);
     expect(clientQueryMock.mock.calls[2][0]).toContain('actor_user_id = $2');
     expect(clientQueryMock.mock.calls.map(([sql]) => String(sql)).filter((sql) => sql.includes('copilot_action_events'))).toHaveLength(0);
+  });
+
+  it('prepares one actor-scoped idempotent undo proposal from the immutable terminal snapshot', async () => {
+    const undoPayload = { targetId: ACTION_ID, restorePrice: '1.000', expectedRevision: 2, parentActionId: AUDIT_ID };
+    const terminalResult = { undo: { supported: true, eligibleUntil: new Date(Date.now() + 60_000).toISOString(), payloadSnapshot: undoPayload, presentation: { summary: 'Restore price', effect: { target: { kind: 'menu_item', id: ACTION_ID, label: 'Latte' }, before: { price: '1.250' }, after: { price: '1.000' }, impact: { warnings: [] } } } } };
+    queryMock.mockResolvedValueOnce({ rows: [proposedRow({ state: 'succeeded', terminal_action_id: AUDIT_ID, terminal_code: 'OK', terminal_result: terminalResult, action_key: 'menu.price.set' })] });
+    clientQueryMock
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(async (_sql, params) => ({ rows: [proposedRow({ id: params[0], action_key: 'menu.price.undo', normalized_payload: undoPayload, payload_hash: payloadHash(undoPayload), parent_action_id: AUDIT_ID })] }))
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce(undefined);
+    const { prepareActionUndoProposal } = await import('../store.mjs');
+    const result = await prepareActionUndoProposal(PRINCIPAL, { proposalId: PROPOSAL_ID });
+    expect(result.proposal).toMatchObject({ action: 'menu.price.undo', requires: { chatConfirmation: true, managerPin: true }, summary: 'Restore price' });
+    expect(result.proposal.confirmationNonce).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(queryMock.mock.calls[0][0]).toContain('business_id = $2 AND actor_user_id = $3');
+    expect(clientQueryMock.mock.calls[1][1]).toEqual(expect.arrayContaining(['menu.price.undo', AUDIT_ID, `undo:${PROPOSAL_ID}`]));
+    const undoId = result.proposal.id;
+    queryMock.mockResolvedValueOnce({ rows: [proposedRow({ state: 'succeeded', terminal_action_id: AUDIT_ID, terminal_code: 'OK', terminal_result: terminalResult, action_key: 'menu.price.set' })] });
+    clientQueryMock
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [proposedRow({ id: undoId, action_key: 'menu.price.undo', normalized_payload: undoPayload, payload_hash: payloadHash(undoPayload), parent_action_id: AUDIT_ID, event_sequence: 2 })] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce(undefined);
+    const replay = await prepareActionUndoProposal(PRINCIPAL, { proposalId: PROPOSAL_ID });
+    expect(replay.created).toBe(false);
+    expect(replay.proposal.id).toBe(undoId);
+    expect(replay.proposal.confirmationNonce).not.toBe(result.proposal.confirmationNonce);
   });
 
   it('creates or rotates an exact live proposal nonce in one transaction', async () => {

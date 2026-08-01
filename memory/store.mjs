@@ -2,7 +2,8 @@
 // Pool built from CRDB_CONNECTION_STRING — this module is the only place in the codebase
 // that talks SQL to the memory tables (schema.sql & migrations own their shape).
 import pg from 'pg';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { canonicalizeActionPayload } from '../agent/actions/canonical.mjs';
 
 const { Pool } = pg;
 
@@ -20,6 +21,13 @@ const MAX_ACTION_TEXT_BYTES = 2_000;
 const TERMINAL_ACTION_STATES = new Set(['succeeded', 'rejected', 'expired', 'cancelled', 'stale', 'failed', 'reconciliation_pending']);
 const RECONCILIATION_OBSERVATIONS = new Set(['audit_succeeded', 'audit_failed', 'audit_absent', 'audit_unavailable', 'policy_mismatch']);
 const OPERATIONAL_COMMAND = /^ops\.(reminder|handover|exception_note)\.(create|complete|cancel|supersede)$/;
+const UNDO_ACTION_BY_PARENT = Object.freeze({
+  'menu.availability.set': 'menu.availability.undo', 'menu.price.set': 'menu.price.undo',
+  'ingredient.availability.set': 'ingredient.availability.undo', 'waste.record': 'waste.reverse',
+  'cash.paid_in_out.record': 'cash.paid_in_out.reverse', 'stock.count.correct': 'stock.count.undo',
+  'purchase_order.draft.create': 'purchase_order.draft.undo',
+});
+const PIN_UNDO_ACTIONS = new Set(['menu.price.undo', 'ingredient.availability.undo', 'waste.reverse', 'cash.paid_in_out.reverse', 'stock.count.undo']);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 export const MAX_TRANSACTION_RETRIES = 3;
@@ -216,6 +224,10 @@ function canonicalJson(value) {
 
 export function hashCanonicalPayload(value) {
   return createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex');
+}
+
+function hashStoredActionPayload(actionKey, value) {
+  return createHash('sha256').update(canonicalizeActionPayload(actionKey, value) ?? canonicalJson(value), 'utf8').digest('hex');
 }
 
 function assertTimestamp(value, name) {
@@ -690,7 +702,7 @@ export async function createActionProposal(principal, input = {}, { signal } = {
   if (!Number.isSafeInteger(policyVersion) || policyVersion < 0) throw new Error('policyVersion must be a non-negative integer');
   const payload = assertJsonObject(input.normalizedPayload, 'normalizedPayload');
   const payloadHash = assertSha256(input.payloadHash, 'payloadHash');
-  if (hashCanonicalPayload(input.normalizedPayload) !== payloadHash) {
+  if (hashStoredActionPayload(actionKey, input.normalizedPayload) !== payloadHash) {
     throw new Error('payloadHash does not match normalizedPayload');
   }
   const confirmationNonceHash = assertSha256(input.confirmationNonceHash, 'confirmationNonceHash');
@@ -752,7 +764,7 @@ export async function createOrRotateActionProposal(principal, input = {}, { sign
   if (!Number.isSafeInteger(policyVersion) || policyVersion < 0) throw new Error('policyVersion must be a non-negative integer');
   const payload = assertJsonObject(input.normalizedPayload, 'normalizedPayload');
   const payloadHash = assertSha256(input.payloadHash, 'payloadHash');
-  if (hashCanonicalPayload(input.normalizedPayload) !== payloadHash) {
+  if (hashStoredActionPayload(actionKey, input.normalizedPayload) !== payloadHash) {
     throw new Error('payloadHash does not match normalizedPayload');
   }
   const confirmationNonceHash = assertSha256(input.confirmationNonceHash, 'confirmationNonceHash');
@@ -889,6 +901,7 @@ export async function recordActionTerminal(principal, input = {}, { signal } = {
   const message = input.message == null ? null : assertShortText(input.message, 'message', { max: 500 });
   const actionId = input.actionId == null ? null : assertUuid(input.actionId, 'actionId');
   const posAuditActionId = input.posAuditActionId == null ? null : assertUuid(input.posAuditActionId, 'posAuditActionId');
+  const terminalResult = input.terminalResult == null ? null : assertJsonObject(input.terminalResult, 'terminalResult');
   if (state === 'succeeded' && (!input.authoritativePosAudit || !actionId || !posAuditActionId)) {
     throw new Error('POS success requires an authoritative POS audit action id');
   }
@@ -899,7 +912,7 @@ export async function recordActionTerminal(principal, input = {}, { signal } = {
   return withTransaction(async (client) => {
     const updated = await client.query(
       `UPDATE copilot_action_proposals
-          SET state = $5, terminal_action_id = $6, terminal_code = $7, terminal_message = $8,
+          SET state = $5, terminal_action_id = $6, terminal_code = $7, terminal_message = $8, terminal_result = $11,
               pos_audit_action_id = CASE WHEN $9 THEN $10 ELSE pos_audit_action_id END,
               reconciliation_state = CASE WHEN $9 THEN 'observed' ELSE reconciliation_state END,
               reconciled_at = CASE WHEN $9 THEN now() ELSE reconciled_at END,
@@ -909,7 +922,7 @@ export async function recordActionTerminal(principal, input = {}, { signal } = {
         WHERE id = $1 AND business_id = $2 AND actor_user_id = $3
           AND state = 'confirming' AND lease_id = $4
         RETURNING *`,
-      [proposalId, p.businessId, p.actorId, leaseId, state, actionId, code, message, Boolean(input.authoritativePosAudit), posAuditActionId]
+      [proposalId, p.businessId, p.actorId, leaseId, state, actionId, code, message, Boolean(input.authoritativePosAudit), posAuditActionId, terminalResult]
     );
     if (updated.rows.length === 0) throw new Error('Proposal lease is unavailable');
     const row = updated.rows[0];
@@ -1006,6 +1019,7 @@ export async function recordActionReconciliation(principal, input = {}, { signal
   const posAuditActionId = input.posAuditActionId == null ? null : assertUuid(input.posAuditActionId, 'posAuditActionId');
   const resultCode = input.resultCode == null ? null : assertShortText(input.resultCode, 'resultCode', { max: 80 });
   const metadata = assertJsonObject(input.metadata || {}, 'reconciliation metadata', 4 * 1024);
+  const terminalResult = input.terminalResult == null ? null : assertJsonObject(input.terminalResult, 'terminalResult');
   if ((observation === 'audit_succeeded' || observation === 'audit_failed') && (!input.authoritativeAudit || !actionId || !posAuditActionId)) {
     throw new Error('Audit terminal observations require authoritative caller-scoped evidence');
   }
@@ -1036,13 +1050,14 @@ export async function recordActionReconciliation(principal, input = {}, { signal
       `UPDATE copilot_action_proposals
           SET state = $4, terminal_action_id = CASE WHEN $5 THEN COALESCE(terminal_action_id, $6) ELSE terminal_action_id END,
               terminal_code = COALESCE($8, terminal_code), pos_audit_action_id = COALESCE($7, pos_audit_action_id),
+              terminal_result = CASE WHEN $5 THEN COALESCE($10, terminal_result) ELSE terminal_result END,
               reconciliation_state = CASE WHEN $5 THEN 'observed' ELSE 'pending' END, reconciled_at = now(),
               lease_id = NULL, lease_expires_at = NULL, event_sequence = event_sequence + 1, updated_at = now()
         WHERE id = $1 AND business_id = $2 AND actor_user_id = $3
           AND state IN ('confirming', 'reconciliation_pending')
           AND (lease_expires_at <= now() OR $9)
         RETURNING *`,
-      [proposalId, p.businessId, p.actorId, state, Boolean(input.authoritativeAudit), actionId, posAuditActionId, resultCode, authoritativeCommittedSuccess]
+      [proposalId, p.businessId, p.actorId, state, Boolean(input.authoritativeAudit), actionId, posAuditActionId, resultCode, authoritativeCommittedSuccess, terminalResult]
     );
     if (updated.rows.length === 0) throw new Error('Proposal is not reconcilable');
     const row = updated.rows[0];
@@ -1069,6 +1084,103 @@ export async function getActionProposal(principal, proposalId, { signal } = {}) 
     [id, p.businessId, p.actorId], signal
   );
   return mapProposal(rows[0]);
+}
+
+/** Internal bootstrap lookup for action HTTP only. The caller has already verified the JWT;
+ * it returns no nonce and is constrained to that actor before a scoped membership re-check. */
+export async function getActionProposalForActor(actorId, proposalId, { signal } = {}) {
+  const id = assertUuid(proposalId, 'proposalId');
+  const actor = assertUuid(actorId, 'actorId');
+  const { rows } = await runQuery(
+    `SELECT id, business_id, actor_user_id, action_key, action_version, policy_version, normalized_payload, payload_hash,
+            target_snapshot_hash, expected_state_hash, parent_action_id, state, expires_at, lease_id, lease_expires_at,
+            terminal_action_id, terminal_code, terminal_message, terminal_result, reconciliation_state, reconciled_at, pos_audit_action_id,
+            created_at, updated_at
+       FROM copilot_action_proposals WHERE id = $1 AND actor_user_id = $2`, [id, actor], signal
+  );
+  return mapProposal(rows[0]);
+}
+
+function validateUndoPayload(actionKey, value) {
+  const keys = {
+    'menu.availability.undo': ['targetId', 'restoreAvailable', 'expectedRevision', 'parentActionId'],
+    'menu.price.undo': ['targetId', 'restorePrice', 'expectedRevision', 'parentActionId'],
+    'ingredient.availability.undo': ['targetId', 'restoreAvailability', 'expectedRevision', 'expectedImpactHash', 'parentActionId'],
+    'waste.reverse': ['targetId', 'reason', 'originalActionId'],
+    'cash.paid_in_out.reverse': ['targetId', 'reason', 'originalActionId'],
+    'stock.count.undo': ['targetId', 'restoreCountedQty', 'expectedRevision', 'reason', 'parentActionId'],
+    'purchase_order.draft.undo': ['targetId', 'expectedRevision', 'parentActionId'],
+  }[actionKey];
+  if (!keys) throw new Error('Parent action is not undo-enabled');
+  const payload = JSON.parse(assertJsonObject(value, 'undo payloadSnapshot'));
+  const unknown = Object.keys(payload).filter((key) => !keys.includes(key));
+  if (unknown.length || keys.some((key) => !Object.hasOwn(payload, key))) throw new Error('undo payloadSnapshot shape is invalid');
+  assertUuid(payload.targetId, 'undo payloadSnapshot.targetId');
+  const parent = payload.parentActionId ?? payload.originalActionId;
+  assertUuid(parent, 'undo payloadSnapshot parent action');
+  if (actionKey.includes('availability.undo') && actionKey.startsWith('menu.') && typeof payload.restoreAvailable !== 'boolean') throw new Error('restoreAvailable must be boolean');
+  for (const key of ['expectedRevision']) if (Object.hasOwn(payload, key) && (!Number.isSafeInteger(payload[key]) || payload[key] < 1)) throw new Error(`${key} must be positive`);
+  for (const key of ['restorePrice', 'restoreCountedQty']) if (Object.hasOwn(payload, key) && (typeof payload[key] !== 'string' || !/^(0|[1-9]\d{0,6})\.\d{2,3}$/.test(payload[key]))) throw new Error(`${key} is invalid`);
+  if (payload.expectedImpactHash !== undefined) assertSha256(payload.expectedImpactHash, 'expectedImpactHash');
+  if (payload.restoreAvailability !== undefined && !['unknown', 'available', 'unavailable'].includes(payload.restoreAvailability)) throw new Error('restoreAvailability is invalid');
+  if (payload.reason !== undefined) assertShortText(payload.reason, 'undo reason', { max: 500 });
+  return { ...payload };
+}
+
+/** Creates or rotates one actor-bound undo proposal from an immutable terminal snapshot. */
+export async function prepareActionUndoProposal(principal, input = {}, { signal } = {}) {
+  const p = normalizeActionPrincipal(principal);
+  const proposalId = assertUuid(input.proposalId, 'proposalId');
+  const original = await getActionProposal(p, proposalId, { signal });
+  if (!original || original.state !== 'succeeded' || !original.terminalActionId || original.terminalCode !== 'OK') return null;
+  // Runtime may supply a freshly fetched, actor-scoped immutable POS audit snapshot. Never
+  // trust a browser-provided snapshot; this function is only exposed through trusted composition.
+  const undo = input.auditUndo ?? original.terminalResult?.undo;
+  const eligibleUntil = undo?.eligibleUntil ? new Date(undo.eligibleUntil).getTime() : NaN;
+  if (!undo || undo.supported !== true || !Number.isFinite(eligibleUntil) || eligibleUntil <= Date.now()) return null;
+  const actionKey = UNDO_ACTION_BY_PARENT[original.actionKey];
+  if (!actionKey) return null;
+  const payload = validateUndoPayload(actionKey, undo.payloadSnapshot);
+  const parentActionId = assertUuid(original.terminalActionId, 'terminalActionId');
+  if ((payload.parentActionId ?? payload.originalActionId) !== parentActionId) throw new Error('undo snapshot parent does not match terminal action');
+  const view = undo.presentation;
+  if (!view || typeof view !== 'object' || typeof view.summary !== 'string' || !view.effect || typeof view.effect !== 'object') {
+    throw new Error('undo presentation snapshot is unavailable');
+  }
+  const nonce = randomBytes(32).toString('base64url');
+  const normalizedPayload = Object.freeze(payload);
+  const created = await createOrRotateActionProposal(p, {
+    actionKey, actionVersion: 1, policyVersion: original.policyVersion,
+    normalizedPayload, payloadHash: hashStoredActionPayload(actionKey, normalizedPayload),
+    parentActionId, idempotencyKey: `undo:${original.id}`,
+    confirmationNonceHash: createHash('sha256').update(nonce, 'utf8').digest('hex'),
+    expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+  }, { signal });
+  return {
+    proposal: {
+      id: created.proposal.id, action: actionKey, state: 'proposed', expiresAt: created.proposal.expiresAt,
+      confirmationNonce: nonce, requires: { chatConfirmation: true, managerPin: PIN_UNDO_ACTIONS.has(actionKey) },
+      summary: view.summary, effect: view.effect, undo: { supported: false, conditions: [] },
+    },
+    created: created.created,
+  };
+}
+
+/** Atomic durable 5-per-minute confirm limiter. No proposal, nonce, PIN, or capability is stored. */
+export async function consumeActionConfirmLimit(principal, { limit = 5, windowSeconds = 60 } = {}, { signal } = {}) {
+  const p = normalizeActionPrincipal(principal);
+  if (limit !== 5 || windowSeconds !== 60) throw new Error('confirm limiter configuration is fixed at 5 per 60 seconds');
+  const { rows } = await runQuery(
+    `INSERT INTO copilot_action_confirm_limits (business_id, actor_user_id, window_started_at, attempts)
+       VALUES ($1,$2,now(),1)
+     ON CONFLICT (business_id, actor_user_id) DO UPDATE SET
+       window_started_at = CASE WHEN copilot_action_confirm_limits.window_started_at <= now() - interval '60 seconds' THEN now() ELSE copilot_action_confirm_limits.window_started_at END,
+       attempts = CASE WHEN copilot_action_confirm_limits.window_started_at <= now() - interval '60 seconds' THEN 1 ELSE copilot_action_confirm_limits.attempts + 1 END
+     WHERE copilot_action_confirm_limits.attempts < 5
+        OR copilot_action_confirm_limits.window_started_at <= now() - interval '60 seconds'
+     RETURNING attempts`, [p.businessId, p.actorId], signal
+  );
+  return { allowed: rows.length === 1, attempts: rows[0]?.attempts ?? 5 };
 }
 
 function parseOperationalCommand(commandKey) {

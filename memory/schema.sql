@@ -99,6 +99,10 @@ CREATE TABLE IF NOT EXISTS copilot_action_proposals (
 );
 CREATE INDEX IF NOT EXISTS copilot_action_proposals_principal_status_idx ON copilot_action_proposals (business_id, actor_user_id, state, updated_at DESC);
 CREATE INDEX IF NOT EXISTS copilot_action_proposals_expiry_idx ON copilot_action_proposals (state, expires_at, lease_expires_at);
+CREATE TABLE IF NOT EXISTS copilot_action_confirm_limits (
+  business_id UUID NOT NULL, actor_user_id UUID NOT NULL, window_started_at TIMESTAMPTZ NOT NULL,
+  attempts INT NOT NULL CHECK (attempts >= 0 AND attempts <= 5), PRIMARY KEY (business_id, actor_user_id)
+);
 
 CREATE TABLE IF NOT EXISTS copilot_action_events (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(), proposal_id UUID NOT NULL, business_id UUID NOT NULL, actor_user_id UUID NOT NULL,

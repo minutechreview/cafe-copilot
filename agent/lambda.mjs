@@ -16,6 +16,8 @@ import {
   getDemoSessionIdFromCookie,
   resolveTrustedChatInput,
 } from './handler.mjs';
+import { handleActionHttpRequest } from './actions/http.mjs';
+import { createConfiguredActionDependencies } from './actions/runtime.mjs';
 
 const GENERIC_ERROR = "The copilot couldn't answer just now. Please try again.";
 // Keeps the response-stream connection (and any proxy/CDN in front of it) from treating a
@@ -28,6 +30,7 @@ const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 const MAX_RATE_LIMIT_KEYS = 10_000;
 const DEFAULT_MAX_BODY_BYTES = 20_000;
 const rateLimitWindows = new Map();
+const actionDependencies = createConfiguredActionDependencies();
 
 function positiveIntegerEnv(name, fallback, maximum) {
   const raw = process.env[name];
@@ -60,7 +63,7 @@ function allowedOrigins() {
 }
 
 /** CORS does not stop cross-site writes, so cookie-bearing browser requests need an app check. */
-export function assertSafeBrowserRequest(event) {
+export function assertSafeBrowserRequest(event, { requiresJson = true } = {}) {
   const headers = event?.headers || {};
   const originEntry = Object.entries(headers).find(([key]) => key.toLowerCase() === 'origin');
   const origin = originEntry?.[1];
@@ -72,7 +75,7 @@ export function assertSafeBrowserRequest(event) {
 
   const contentTypeEntry = Object.entries(headers).find(([key]) => key.toLowerCase() === 'content-type');
   const contentType = contentTypeEntry?.[1];
-  if (!contentType || !/^application\/json(?:\s*;|$)/i.test(contentType)) {
+  if (requiresJson && (!contentType || !/^application\/json(?:\s*;|$)/i.test(contentType))) {
     const error = new Error('Content-Type must be application/json.');
     error.statusCode = 400;
     throw error;
@@ -147,6 +150,15 @@ function respondJsonError(responseStream, statusCode, message) {
   stream.end();
 }
 
+function respondJson(responseStream, statusCode, body) {
+  const stream = awslambda.HttpResponseStream.from(responseStream, {
+    statusCode,
+    headers: { 'Content-Type': 'application/json' },
+  });
+  stream.write(JSON.stringify(body));
+  stream.end();
+}
+
 function clientErrorMessage(error, statusCode = error?.statusCode || error?.status) {
   return [400, 401, 403, 413, 429, 504].includes(statusCode) && error?.message ? error.message : GENERIC_ERROR;
 }
@@ -175,6 +187,42 @@ function writeSseEvent(stream, event) {
 }
 
 export const handler = awslambda.streamifyResponse(async (event, responseStream) => {
+  const method = event?.requestContext?.http?.method || event?.requestContext?.httpMethod || event?.httpMethod || 'POST';
+  const route = event?.rawPath || event?.requestContext?.http?.path || '/chat';
+  const isActionRoute = route === '/copilot/actions/confirm'
+    || route === '/copilot/actions/undo'
+    || route === '/copilot/actions/history'
+    || /^\/copilot\/actions\/[0-9a-f-]+$/.test(route);
+  if (isActionRoute) {
+    try {
+      if (!['GET', 'POST'].includes(method)) {
+        respondJson(responseStream, 405, { error: 'Method not allowed', code: 'METHOD_NOT_ALLOWED' });
+        return;
+      }
+      assertSafeBrowserRequest(event, { requiresJson: method === 'POST' });
+      let body = {};
+      if (method === 'POST') body = parseRequestPayload(event);
+      enforceRateLimit(event);
+      const deadline = createRequestDeadline();
+      try {
+        const result = await deadline.race(handleActionHttpRequest({
+          method,
+          path: route,
+          headers: event?.headers || {},
+          body,
+          query: event?.queryStringParameters || {},
+          signal: deadline.signal,
+        }, { dependencies: actionDependencies }));
+        respondJson(responseStream, result.status, result.body);
+      } finally {
+        deadline.clear();
+      }
+    } catch (err) {
+      const statusCode = err?.statusCode || err?.status || 400;
+      respondJson(responseStream, statusCode, { error: statusCode === 413 ? err.message : clientErrorMessage(err, statusCode) });
+    }
+    return;
+  }
   try {
     assertSafeBrowserRequest(event);
   } catch (err) {

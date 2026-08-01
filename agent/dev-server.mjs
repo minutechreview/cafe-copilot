@@ -14,6 +14,8 @@ import { config as loadEnv } from 'dotenv';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { handleActionHttpRequest } from './actions/http.mjs';
+import { createConfiguredActionDependencies } from './actions/runtime.mjs';
 
 loadEnv({ path: path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.env.local') });
 
@@ -27,6 +29,9 @@ const MAX_REQUEST_DEADLINE_MS = 54_000;
 const MAX_RATE_LIMIT_KEYS = 10_000;
 const DEFAULT_MAX_BODY_BYTES = 20_000;
 const requestWindows = new Map();
+// No implicit POS writer is composed here. Until deployment injects the durable policy,
+// limiter, executor, reconciliation, history, and undo adapters, action routes deny safely.
+const actionDependencies = createConfiguredActionDependencies();
 
 function positiveIntegerEnv(name, fallback, maximum) {
   const raw = process.env[name];
@@ -79,7 +84,7 @@ function applyCors(req, res) {
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
   }
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
   return true;
 }
@@ -227,7 +232,58 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (req.method !== 'POST' || req.url !== '/chat') {
+  const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+  const isActionRoute = url.pathname === '/copilot/actions/confirm'
+    || url.pathname === '/copilot/actions/undo'
+    || url.pathname === '/copilot/actions/history'
+    || /^\/copilot\/actions\/[0-9a-f-]+$/.test(url.pathname);
+  if (isActionRoute) {
+    if (!['GET', 'POST'].includes(req.method || '')) {
+      res.writeHead(405, { 'Content-Type': 'application/json', Allow: 'GET, POST, OPTIONS' });
+      res.end(JSON.stringify({ error: 'Method not allowed', code: 'METHOD_NOT_ALLOWED' }));
+      return;
+    }
+    if (req.method === 'POST' && !/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Content-Type must be application/json.', code: 'INVALID_ACTION_REQUEST' }));
+      return;
+    }
+    let body = {};
+    try {
+      const raw = req.method === 'POST' ? await readBody(req) : '';
+      body = raw ? JSON.parse(raw) : {};
+    } catch (err) {
+      const statusCode = err?.statusCode || 400;
+      res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: statusCode === 413 ? err.message : 'Request body must be valid JSON' }));
+      return;
+    }
+    try {
+      enforceRateLimit(req);
+      const deadline = createRequestDeadline();
+      try {
+        const result = await deadline.race(handleActionHttpRequest({
+          method: req.method,
+          path: url.pathname,
+          headers: req.headers,
+          body,
+          query: Object.fromEntries(url.searchParams),
+          signal: deadline.signal,
+        }, { dependencies: actionDependencies }));
+        res.writeHead(result.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result.body));
+      } finally {
+        deadline.clear();
+      }
+    } catch (err) {
+      const statusCode = err?.statusCode || err?.status || 500;
+      res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: clientErrorMessage(err, statusCode), code: 'ACTION_UNAVAILABLE' }));
+    }
+    return;
+  }
+
+  if (req.method !== 'POST' || url.pathname !== '/chat') {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
     return;
