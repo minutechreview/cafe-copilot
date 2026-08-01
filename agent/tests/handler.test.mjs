@@ -260,7 +260,8 @@ describe('handler', () => {
       expect(executeToolMock).toHaveBeenCalledWith(
         'get_day_summary',
         { date: '2026-07-04' },
-        { businessId: 'demo-cafe', conversationId: 'abc-123', principal: EXPECTED_DEFAULT_PRINCIPAL, posClient: undefined }
+        expect.objectContaining({ businessId: 'demo-cafe', conversationId: 'abc-123', principal: EXPECTED_DEFAULT_PRINCIPAL, posClient: undefined }),
+        { requestId: 'abc-123', toolUseId: 'call-1' }
       );
 
       const secondInput = sendMock.mock.calls[1][0].input;
@@ -563,7 +564,8 @@ describe('handler', () => {
       expect(executeToolMock).toHaveBeenCalledWith(
         'get_day_summary',
         { date: '2026-07-04' },
-        { businessId: 'demo-cafe', conversationId: 'abc-123', principal: EXPECTED_DEFAULT_PRINCIPAL, posClient: undefined }
+        expect.objectContaining({ businessId: 'demo-cafe', conversationId: 'abc-123', principal: EXPECTED_DEFAULT_PRINCIPAL, posClient: undefined }),
+        { requestId: 'abc-123', toolUseId: 'call-1' }
       );
       expect(events.at(-1)).toEqual({
         type: 'done',
@@ -592,6 +594,34 @@ describe('handler', () => {
       expect(draftIndex).toBeGreaterThanOrEqual(0);
       expect(draftIndex).toBeLessThan(doneIndex);
       expect(events[draftIndex]).toEqual({ type: 'draft', draft: draftPayload });
+    });
+
+    it('emits only the nonce-bearing action proposal to SSE before the final reply', async () => {
+      const proposal = {
+        id: '44444444-4444-4444-8444-444444444444', action: 'menu.price.set',
+        state: 'proposed', confirmationNonce: 'browser-only-nonce',
+      };
+      sendMock
+        .mockResolvedValueOnce(toolUseStream({
+          toolUseId: 'stable-tool-use', name: 'prepare_menu_price_set',
+          inputChunks: '{"targetId":"33333333-3333-4333-8333-333333333333","price":"1.250"}',
+        }))
+        .mockResolvedValueOnce(textStream('Please review the proposal card.'));
+      executeToolMock.mockImplementationOnce(async (_name, _input, ctx) => {
+        ctx.preparedActionProposals.push(proposal);
+        return { prepared: true, action: 'menu.price.set', summary: 'Change Latte to KWD 1.250' };
+      });
+
+      const events = await runAndCollectEvents({ message: 'Change the latte price', conversationId: 'abc-123' });
+      const proposalIndex = events.findIndex((event) => event.type === 'action_proposal');
+      const doneIndex = events.findIndex((event) => event.type === 'done');
+      expect(proposalIndex).toBeGreaterThanOrEqual(0);
+      expect(proposalIndex).toBeLessThan(doneIndex);
+      expect(events[proposalIndex]).toEqual({ type: 'action_proposal', schemaVersion: 1, proposal });
+      const modelToolResult = sendMock.mock.calls[1][0].input.messages[2].content[0].toolResult.content[0].json;
+      expect(modelToolResult).not.toHaveProperty('confirmationNonce');
+      expect(JSON.stringify(modelToolResult)).not.toContain('browser-only-nonce');
+      expect(events.some((event) => event.type === 'action_result')).toBe(false);
     });
 
     it('stops after MAX_ITERATIONS tool_use turns and reports an error event instead of throwing', async () => {

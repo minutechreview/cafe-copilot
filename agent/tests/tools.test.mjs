@@ -67,10 +67,10 @@ describe('agent/tools.mjs', () => {
   });
 
   describe('toolConfig', () => {
-    it('declares the seven contracted tools', async () => {
+    it('declares the read-only tools plus closed action-preparation tools', async () => {
       const { toolConfig } = await import('../tools.mjs');
       const names = toolConfig.tools.map((t) => t.toolSpec.name);
-      expect(names).toEqual([
+      expect(names.slice(0, 7)).toEqual([
         'get_day_summary',
         'get_staff_performance',
         'get_waste_log',
@@ -79,6 +79,9 @@ describe('agent/tools.mjs', () => {
         'list_notes',
         'draft_purchase_order',
       ]);
+      expect(names).toContain('prepare_menu_price_set');
+      expect(names).toContain('prepare_navigation_open');
+      expect(names).not.toContain('execute_sql');
     });
   });
 
