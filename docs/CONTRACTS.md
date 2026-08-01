@@ -108,3 +108,51 @@ clumped sessions; adjustment created_at = its order's created_at + 30m). Applied
 −4,800; 4 refunds on 2026-07-08), aggregate variance unchanged (−5,140) since the cash trigger
 is session-scoped, not time-scoped. If demo-seed is ever re-run with --fresh, request the
 fixup again via STATUS-codex.md.
+
+## Amendment 2 (2026-08-01, product owner) — Approval-gated Copilot actions v1
+
+This amendment supersedes the former strict POS-read-only invariant only for the closed,
+approval-gated v1 registry. It also overrides the former dual-track ownership restriction for
+this feature: the Café Copilot agent, memory, and web own proposal, confirmation, recovery,
+cards, and passive records; Project POS owns migrations, privileged RPCs, audit, policy, and
+widget integration. All other ownership and production-preservation rules remain in force.
+
+### Status and gating
+
+Actions are disabled by default. Gate 0 and P1–P6, including the verified staging membership gate,
+must pass before P7 may enable one explicitly allowlisted internal staging business. P7 then runs
+the adversarial E2E, reconciliation, and monitored action-by-action rollout; its evidence is required
+before broader staging availability. Production actions remain disabled. The demo stays read-only
+and isolated; it may never execute, receive, or simulate a privileged POS capability.
+
+### Non-negotiable action boundary
+
+- Server derives the verified JWT actor, active owner/manager membership, and business scope for
+  every request. There is no auth fallback; browser roles, selected profiles, IDs, and model
+  inputs prove nothing. Caller-JWT POS clients remain mandatory, with explicit tenant filters;
+  no service-role credential is used by Copilot.
+- The registry is a closed, versioned allowlist. A model cannot select an RPC/route/SQL, arbitrary
+  payload, target snapshot, or URL. Global, business, and action policy switches are checked by
+  both executor and RPC; any switch/version change invalidates pending work.
+- A proposal is emitted only as the additive unnamed SSE `action_proposal` frame. SSE never
+  carries a result or executes a write. `POST /copilot/actions/confirm` synchronously returns
+  terminal JSON; `GET /copilot/actions/{proposalId}` is the authenticated actor/business recovery
+  path and must reconcile from POS audit without repeating a write.
+- Confirmation is actor-bound and, where required, verifies only that actor's staff PIN. PINs,
+  capabilities, service credentials, and raw secrets never enter browser storage, SSE, model
+  context, CockroachDB, logs, or audit payloads.
+- The server-only executor signs a short-lived JCS-canonical, HMAC-SHA-256 capability; only the
+  POS verifier may read its Vault key. Every narrow `SECURITY DEFINER` RPC independently checks
+  membership, policy, capability, payload hash, expiry, actor/business/action, PIN and target
+  preconditions, then atomically consumes its `jti`, mutates, and appends immutable POS audit.
+  Replay returns only the matching narrow terminal result; mismatch fails closed.
+- CockroachDB stores principal-scoped proposals, leases, passive operational records, and
+  reconciliation observations only. POS audit is authoritative for POS success; there is no
+  cross-database transaction or CRDB claim of POS success. Proposal and passive lifecycles are
+  immutable/append-only where applicable and tenant-scoped.
+- Revisions and expected state/hash protect every mutable target. Undo is a fresh, original-actor
+  proposal using a compensating action; it never deletes or rewrites audit/ledger history.
+  Owner/manager authorization is required for action visibility and execution.
+- Currency remains ISO-4217, including `KWD` (three fixed decimal places); unsupported currencies
+  are action-disabled. Existing demo isolation, production safeguards, and ordinary read-only POS
+  flows remain unchanged.
