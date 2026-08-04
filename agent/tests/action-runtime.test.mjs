@@ -96,7 +96,9 @@ describe('configured approved-action runtime', () => {
       prepareActionUndoProposal: vi.fn(async (_principal, input) => ({ proposal: { action: input.proposalId === PROPOSAL ? 'menu.price.undo' : null } })),
     };
     const { deps } = configured({ store });
-    const audit = { action_id: ACTION, proposal_id: PROPOSAL, action_key: 'menu.price.set', target_kind: 'menu_item', target_id: PROPOSAL, before_state: { price: '1.000' }, after_state: { price: '1.250' }, before_revision: 1, after_revision: 2, status: 'succeeded', result_code: 'OK', completed_at: '2026-08-01T12:00:00Z', eligible_until: '2026-08-01T12:05:00Z' };
+    const auditCompletedAt = new Date(Date.now() - 30_000).toISOString();
+    const auditEligibleUntil = new Date(Date.now() + 60_000).toISOString();
+    const audit = { action_id: ACTION, proposal_id: PROPOSAL, action_key: 'menu.price.set', target_kind: 'menu_item', target_id: PROPOSAL, before_state: { price: '1.000' }, after_state: { price: '1.250' }, before_revision: 1, after_revision: 2, status: 'succeeded', result_code: 'OK', completed_at: auditCompletedAt, eligible_until: auditEligibleUntil };
     const posClient = { rpc: vi.fn(async (name) => name === 'copilot_list_action_audit' ? { data: [{ ...audit, action_key: 'menu.price.set' }], error: null } : { data: [audit], error: null }) };
     await expect(deps.reconcile({ principal: { businessId: BUSINESS, actorId: ACTOR }, proposal, posClient })).resolves.toMatchObject({ state: 'succeeded' });
     expect(store.recordActionReconciliation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ authoritativeAudit: true, proposalId: PROPOSAL, terminalResult: expect.objectContaining({ result: expect.any(Object), undo: expect.objectContaining({ supported: true, conditions: [] }) }) }), expect.anything());

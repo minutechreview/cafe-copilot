@@ -55,7 +55,7 @@ const RUNTIME_CANDIDATES = ['nodejs22.x', 'nodejs20.x'];
 // AWS_REGION is provided by the Lambda runtime automatically and can't be overridden, and no
 // static AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY should ever reach the deployed function (it
 // must rely on the execution role via the default credential chain).
-const LAMBDA_ENV_KEYS = [
+export const LAMBDA_ENV_KEYS = [
   'CRDB_CONNECTION_STRING',
   'CRDB_POOL_MAX',
   'CRDB_CONNECTION_TIMEOUT_MS',
@@ -80,13 +80,14 @@ const LAMBDA_ENV_KEYS = [
   'COPILOT_MAX_BODY_BYTES',
   'COPILOT_LOCALE_OFFSETS',
   'BEDROCK_MAX_TOKENS',
+  // Actions stay off unless the operator explicitly enables them. When enabled,
+  // deployment validates all of these before any AWS mutation is attempted.
+  'COPILOT_ACTIONS_RUNTIME_ENABLED',
+  'COPILOT_CAPABILITY_HMAC_KEY',
+  'COPILOT_CAPABILITY_KID',
 ];
 
 const region = process.env.AWS_REGION;
-if (!region) {
-  throw new Error('AWS_REGION is not configured in .env.local');
-}
-
 const iam = new IAMClient({ region });
 const lambdaClient = new LambdaClient({ region });
 const sts = new STSClient({ region });
@@ -123,7 +124,35 @@ function configuredCorsOrigins() {
 }
 
 /** Refuse to deploy if an operator omitted the baseline time and cost ceilings. */
-function assertDeploySafetyConfiguration() {
+function assertNonBlankString(env, name) {
+  if (typeof env[name] !== 'string' || !env[name].trim()) {
+    // Deliberately name only the missing key: deploy output must never reveal a secret.
+    throw new Error(`${name} must be configured when COPILOT_ACTIONS_RUNTIME_ENABLED is "true"`);
+  }
+}
+
+/** Validate the all-or-nothing action runtime gate without logging environment values. */
+export function assertActionRuntimeDeployConfiguration(env = process.env) {
+  const enabled = env.COPILOT_ACTIONS_RUNTIME_ENABLED;
+  if (enabled === undefined || enabled === '') return false;
+  if (enabled !== 'true' && enabled !== 'false') {
+    throw new Error('COPILOT_ACTIONS_RUNTIME_ENABLED must be explicitly "true" or "false"');
+  }
+  if (enabled === 'false') return false;
+
+  assertNonBlankString(env, 'COPILOT_CAPABILITY_HMAC_KEY');
+  assertNonBlankString(env, 'COPILOT_CAPABILITY_KID');
+  assertNonBlankString(env, 'CRDB_CONNECTION_STRING');
+  return true;
+}
+
+/** The deploy target is permanently restricted to the known POS staging project. */
+export function assertDeployStagingTarget(env = process.env) {
+  assertStagingUrl(env.POS_SUPABASE_URL);
+}
+
+export function assertDeploySafetyConfiguration(env = process.env) {
+  if (!region) throw new Error('AWS_REGION is not configured in .env.local');
   if (!['true', 'false'].includes(process.env.DEMO_MODE_ENABLED)) {
     throw new Error('DEMO_MODE_ENABLED must be explicitly "true" or "false"');
   }
@@ -139,8 +168,9 @@ function assertDeploySafetyConfiguration() {
   if (process.env.CRDB_QUERY_TIMEOUT_MS) requiredPositiveInteger('CRDB_QUERY_TIMEOUT_MS', 30_000);
   if (process.env.CRDB_STATEMENT_TIMEOUT_MS) requiredPositiveInteger('CRDB_STATEMENT_TIMEOUT_MS', 30_000);
   requiredPositiveInteger('COPILOT_RESERVED_CONCURRENCY', 10);
-  assertStagingUrl(process.env.POS_SUPABASE_URL);
+  assertDeployStagingTarget(env);
   configuredCorsOrigins();
+  assertActionRuntimeDeployConfiguration(env);
 }
 
 const TRUST_POLICY = {
@@ -168,12 +198,12 @@ function buildInlinePolicy(accountId) {
   };
 }
 
-function buildLambdaEnv() {
-  const env = {};
+export function buildLambdaEnv(env = process.env) {
+  const lambdaEnv = {};
   for (const key of LAMBDA_ENV_KEYS) {
-    if (process.env[key]) env[key] = process.env[key];
+    if (env[key]) lambdaEnv[key] = env[key];
   }
-  return env;
+  return lambdaEnv;
 }
 
 async function getAccountId() {
@@ -450,7 +480,9 @@ async function main() {
   console.log('CORS origins:', corsOrigins.join(', '));
 }
 
-main().catch((err) => {
-  console.error('[deploy] failed:', err);
-  process.exitCode = 1;
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error('[deploy] failed:', err);
+    process.exitCode = 1;
+  });
+}
