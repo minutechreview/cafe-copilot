@@ -1,0 +1,82 @@
+name: Deploy agent Lambda (manual)
+
+# One-click deploy of the Cafe Copilot backend Lambda, run by hand from this workflow's
+# "Run workflow" button in the Actions tab. Never triggers on push/PR - a click is always
+# required to ship a code change to the live function.
+#
+# Mirrors `npm run bundle --workspace=agent && npm run deploy-lambda --workspace=agent` run
+# locally from a checkout with .env.local present (see agent/scripts/deploy-lambda.mjs) -
+# this workflow just supplies that same file from repository secrets instead, since GitHub's
+# runners have no local .env.local of their own.
+#
+# Needs these repository secrets (Settings -> Secrets and variables -> Actions), each copied
+# verbatim from the same .env.local that already deploys this function locally:
+#   AWS_ACCESS_KEY_ID, AWS_REGION, AWS_SECRET_ACCESS_KEY, BEDROCK_EMBEDDING_MODEL_ID,
+#   BEDROCK_MAX_TOKENS, BEDROCK_MODEL_ID, COPILOT_ALLOWED_ORIGINS, COPILOT_MAX_BODY_BYTES,
+#   COPILOT_MAX_INPUT_CHARS, COPILOT_RATE_LIMIT_MAX_REQUESTS, COPILOT_RATE_LIMIT_WINDOW_MS,
+#   COPILOT_REQUEST_TIMEOUT_MS, COPILOT_RESERVED_CONCURRENCY, CRDB_CONNECTION_STRING,
+#   DEMO_BUSINESS_ID, DEMO_MODE_ENABLED, DEMO_OWNER_EMAIL, DEMO_OWNER_PASSWORD, EMBEDDING_DIM,
+#   POS_SUPABASE_ANON_KEY, POS_SUPABASE_URL, WEB_ORIGIN
+#
+# deploy-lambda.mjs's own assertDeploySafetyConfiguration() and assertStagingUrl() checks still
+# run here exactly as they do locally - a missing or malformed value fails this run the same
+# way it would fail a local one, before anything is touched on AWS.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Bundle and deploy the agent Lambda
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check out feat/chat-history-sidebar
+        uses: actions/checkout@v4
+        with:
+          ref: feat/chat-history-sidebar
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Write .env.local from repository secrets
+        run: |
+          cat > .env.local <<EOF
+          AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_REGION=${{ secrets.AWS_REGION }}
+          AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          BEDROCK_EMBEDDING_MODEL_ID=${{ secrets.BEDROCK_EMBEDDING_MODEL_ID }}
+          BEDROCK_MAX_TOKENS=${{ secrets.BEDROCK_MAX_TOKENS }}
+          BEDROCK_MODEL_ID=${{ secrets.BEDROCK_MODEL_ID }}
+          COPILOT_ALLOWED_ORIGINS=${{ secrets.COPILOT_ALLOWED_ORIGINS }}
+          COPILOT_MAX_BODY_BYTES=${{ secrets.COPILOT_MAX_BODY_BYTES }}
+          COPILOT_MAX_INPUT_CHARS=${{ secrets.COPILOT_MAX_INPUT_CHARS }}
+          COPILOT_RATE_LIMIT_MAX_REQUESTS=${{ secrets.COPILOT_RATE_LIMIT_MAX_REQUESTS }}
+          COPILOT_RATE_LIMIT_WINDOW_MS=${{ secrets.COPILOT_RATE_LIMIT_WINDOW_MS }}
+          COPILOT_REQUEST_TIMEOUT_MS=${{ secrets.COPILOT_REQUEST_TIMEOUT_MS }}
+          COPILOT_RESERVED_CONCURRENCY=${{ secrets.COPILOT_RESERVED_CONCURRENCY }}
+          CRDB_CONNECTION_STRING=${{ secrets.CRDB_CONNECTION_STRING }}
+          DEMO_BUSINESS_ID=${{ secrets.DEMO_BUSINESS_ID }}
+          DEMO_MODE_ENABLED=${{ secrets.DEMO_MODE_ENABLED }}
+          DEMO_OWNER_EMAIL=${{ secrets.DEMO_OWNER_EMAIL }}
+          DEMO_OWNER_PASSWORD=${{ secrets.DEMO_OWNER_PASSWORD }}
+          EMBEDDING_DIM=${{ secrets.EMBEDDING_DIM }}
+          POS_SUPABASE_ANON_KEY=${{ secrets.POS_SUPABASE_ANON_KEY }}
+          POS_SUPABASE_URL=${{ secrets.POS_SUPABASE_URL }}
+          WEB_ORIGIN=${{ secrets.WEB_ORIGIN }}
+          EOF
+
+      - name: Bundle the agent
+        run: npm run bundle --workspace=agent
+
+      - name: Deploy to Lambda
+        run: npm run deploy-lambda --workspace=agent
