@@ -16,6 +16,7 @@ import {
   getDemoSessionIdFromCookie,
   resolveTrustedChatInput,
 } from './handler.mjs';
+import { handleManagementAction, isManagementAction } from './history-actions.mjs';
 
 const GENERIC_ERROR = "The copilot couldn't answer just now. Please try again.";
 // Keeps the response-stream connection (and any proxy/CDN in front of it) from treating a
@@ -147,8 +148,17 @@ function respondJsonError(responseStream, statusCode, message) {
   stream.end();
 }
 
+function respondJson(responseStream, statusCode, body) {
+  const stream = awslambda.HttpResponseStream.from(responseStream, {
+    statusCode,
+    headers: { 'Content-Type': 'application/json' },
+  });
+  stream.write(JSON.stringify(body));
+  stream.end();
+}
+
 function clientErrorMessage(error, statusCode = error?.statusCode || error?.status) {
-  return [400, 401, 403, 413, 429, 504].includes(statusCode) && error?.message ? error.message : GENERIC_ERROR;
+  return [400, 401, 403, 404, 413, 429, 504].includes(statusCode) && error?.message ? error.message : GENERIC_ERROR;
 }
 
 function createRequestDeadline() {
@@ -187,6 +197,27 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream)
     payload = parseRequestPayload(event);
   } catch (err) {
     respondJsonError(responseStream, err.statusCode ?? 400, err.message);
+    return;
+  }
+
+  if (isManagementAction(payload?.action)) {
+    const managementDeadline = createRequestDeadline();
+    try {
+      enforceRateLimit(event);
+      const result = await managementDeadline.race(
+        handleManagementAction({ headers: event?.headers || {}, payload, signal: managementDeadline.signal })
+      );
+      managementDeadline.clear();
+      respondJson(responseStream, 200, result);
+    } catch (err) {
+      managementDeadline.clear();
+      console.error('[lambda] management action failed', {
+        action: payload?.action,
+        statusCode: err?.statusCode || err?.status || 500,
+      });
+      const statusCode = err?.statusCode || err?.status || 500;
+      respondJsonError(responseStream, statusCode, clientErrorMessage(err, statusCode));
+    }
     return;
   }
 

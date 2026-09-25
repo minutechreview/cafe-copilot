@@ -18,6 +18,7 @@ import path from 'node:path';
 loadEnv({ path: path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.env.local') });
 
 const { handler, getDemoSessionIdFromCookie, resolveTrustedChatInput } = await import('./handler.mjs');
+const { handleManagementAction, isManagementAction } = await import('./history-actions.mjs');
 
 const PORT = Number(process.env.PORT) || 8787;
 const WEB_ORIGIN = process.env.WEB_ORIGIN || 'http://localhost:5173';
@@ -85,7 +86,7 @@ function applyCors(req, res) {
 }
 
 function clientErrorMessage(error, statusCode = error?.statusCode || error?.status) {
-  return [400, 401, 403, 413, 429, 504].includes(statusCode) && error?.message ? error.message : GENERIC_ERROR;
+  return [400, 401, 403, 404, 413, 429, 504].includes(statusCode) && error?.message ? error.message : GENERIC_ERROR;
 }
 
 function createRequestDeadline() {
@@ -247,6 +248,26 @@ const server = createServer(async (req, res) => {
     const statusCode = err?.statusCode || 400;
     res.writeHead(statusCode, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: statusCode === 413 ? err.message : 'Request body must be valid JSON' }));
+    return;
+  }
+
+  if (isManagementAction(payload?.action)) {
+    const managementDeadline = createRequestDeadline();
+    try {
+      enforceRateLimit(req);
+      const result = await managementDeadline.race(
+        handleManagementAction({ headers: req.headers, payload, signal: managementDeadline.signal })
+      );
+      managementDeadline.clear();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      managementDeadline.clear();
+      const statusCode = err?.statusCode || err?.status || 500;
+      console.error('[dev-server] management action failed', { action: payload?.action, statusCode });
+      res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: clientErrorMessage(err, statusCode) }));
+    }
     return;
   }
 

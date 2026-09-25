@@ -626,6 +626,119 @@ describe('memory/store.mjs & migrations', () => {
     });
   });
 
+  describe('listConversations', () => {
+    it('lists a principal\'s conversations most-recently-updated first, scoped by principal', async () => {
+      const updatedAt1 = new Date('2026-07-10T00:00:00Z');
+      const updatedAt2 = new Date('2026-07-09T00:00:00Z');
+      queryMock.mockResolvedValueOnce({
+        rows: [
+          { id: 'conv-2', title: 'Second chat', updated_at: updatedAt1 },
+          { id: 'conv-1', title: null, updated_at: updatedAt2 },
+        ],
+      });
+      const { listConversations } = await import('../store.mjs');
+
+      const conversations = await listConversations(PRINCIPAL_AUTH);
+
+      expect(conversations).toEqual([
+        { id: 'conv-2', title: 'Second chat', updatedAt: updatedAt1 },
+        { id: 'conv-1', title: null, updatedAt: updatedAt2 },
+      ]);
+      const [sql, params] = queryMock.mock.calls[0];
+      expect(sql).toContain('ORDER BY updated_at DESC');
+      expect(sql).toContain('business_id = $1');
+      expect(sql).toContain('actor_id = $2');
+      expect(sql).toContain('access_mode = $3');
+      expect(params).toEqual(['biz-1', 'user-100', 'authenticated']);
+    });
+  });
+
+  describe('getConversationMessages', () => {
+    it('returns the full history oldest-first with no LIMIT clause', async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: [
+          { role: 'user', content: 'first' },
+          { role: 'assistant', content: 'second' },
+        ],
+      });
+      const { getConversationMessages } = await import('../store.mjs');
+
+      const messages = await getConversationMessages(PRINCIPAL_AUTH, 'conv-1');
+
+      expect(messages).toEqual([
+        { role: 'user', content: 'first' },
+        { role: 'assistant', content: 'second' },
+      ]);
+      const [sql, params] = queryMock.mock.calls[0];
+      expect(sql).not.toContain('LIMIT');
+      expect(sql).toContain('ORDER BY m.created_at ASC');
+      expect(params).toEqual(['conv-1', 'biz-1', 'user-100', 'authenticated']);
+    });
+
+    it('returns an empty array for a conversation owned by another principal', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+      const { getConversationMessages } = await import('../store.mjs');
+
+      await expect(getConversationMessages(PRINCIPAL_AUTH, 'conv-foreign')).resolves.toEqual([]);
+    });
+
+    it('rejects a missing conversationId', async () => {
+      const { getConversationMessages } = await import('../store.mjs');
+      await expect(getConversationMessages(PRINCIPAL_AUTH, '')).rejects.toThrow('conversationId is required');
+    });
+  });
+
+  describe('renameConversation', () => {
+    it('updates title and updated_at scoped to the exact principal, returns true', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ id: 'conv-1' }] });
+      const { renameConversation } = await import('../store.mjs');
+
+      const result = await renameConversation(PRINCIPAL_AUTH, 'conv-1', '  New title  ');
+
+      expect(result).toBe(true);
+      const [sql, params] = queryMock.mock.calls[0];
+      expect(sql).toContain('UPDATE conversations');
+      expect(sql).toContain('SET title = $1');
+      expect(sql).toContain('updated_at = now()');
+      expect(params).toEqual(['New title', 'conv-1', 'biz-1', 'user-100', 'authenticated']);
+    });
+
+    it('returns false when the conversation belongs to another principal', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+      const { renameConversation } = await import('../store.mjs');
+
+      await expect(renameConversation(PRINCIPAL_AUTH, 'conv-foreign', 'New title')).resolves.toBe(false);
+    });
+
+    it('rejects an empty or whitespace-only title before querying', async () => {
+      const { renameConversation } = await import('../store.mjs');
+
+      await expect(renameConversation(PRINCIPAL_AUTH, 'conv-1', '   ')).rejects.toThrow('title is required');
+      expect(queryMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('deleteConversation', () => {
+    it('deletes a conversation scoped to the exact principal, returns true', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [{ id: 'conv-1' }] });
+      const { deleteConversation } = await import('../store.mjs');
+
+      const result = await deleteConversation(PRINCIPAL_AUTH, 'conv-1');
+
+      expect(result).toBe(true);
+      const [sql, params] = queryMock.mock.calls[0];
+      expect(sql).toContain('DELETE FROM conversations');
+      expect(params).toEqual(['conv-1', 'biz-1', 'user-100', 'authenticated']);
+    });
+
+    it('returns false when the conversation belongs to another principal, no delete performed', async () => {
+      queryMock.mockResolvedValueOnce({ rows: [] });
+      const { deleteConversation } = await import('../store.mjs');
+
+      await expect(deleteConversation(PRINCIPAL_AUTH, 'conv-foreign')).resolves.toBe(false);
+    });
+  });
+
   describe('searchDocuments', () => {
     it('vector searches using cosine operator <=> filtered by business_id', async () => {
       queryMock.mockResolvedValueOnce({

@@ -275,6 +275,122 @@ export async function getRecentMessages(principal, conversationId, limit = 12, {
 }
 
 /**
+ * Lists a principal's conversations, most-recently-updated first.
+ * @param {{ businessId: string, actorId: string, accessMode: string }} principal
+ * @returns {Promise<{id: string, title: string|null, updatedAt: Date}[]>}
+ */
+export async function listConversations(principal, { signal } = {}) {
+  const p = normalizePrincipal(principal);
+
+  throwIfAborted(signal);
+  const { rows } = await runQuery(
+    `SELECT id, title, updated_at
+       FROM conversations
+      WHERE business_id = $1
+        AND actor_id = $2
+        AND access_mode = $3
+      ORDER BY updated_at DESC`,
+    [p.businessId, p.actorId, p.accessMode], signal
+  );
+  throwIfAborted(signal);
+
+  return rows.map((row) => ({ id: row.id, title: row.title, updatedAt: row.updated_at }));
+}
+
+/**
+ * Returns the full message history of a conversation owned by the requesting principal,
+ * oldest first, with no limit. Caller must check `conversationExists` first to distinguish
+ * "not owned" from "owned but empty" — this returns [] for both.
+ * @param {{ businessId: string, actorId: string, accessMode: string }} principal
+ * @param {string} conversationId
+ * @returns {Promise<{role: string, content: string}[]>}
+ */
+export async function getConversationMessages(principal, conversationId, { signal } = {}) {
+  const p = normalizePrincipal(principal);
+  if (!conversationId || typeof conversationId !== 'string' || !conversationId.trim()) {
+    throw new Error('conversationId is required');
+  }
+
+  throwIfAborted(signal);
+  const { rows } = await runQuery(
+    `SELECT m.role, m.content
+       FROM messages m
+       JOIN conversations c ON m.conversation_id = c.id
+      WHERE c.id = $1
+        AND c.business_id = $2
+        AND c.actor_id = $3
+        AND c.access_mode = $4
+      ORDER BY m.created_at ASC`,
+    [conversationId.trim(), p.businessId, p.actorId, p.accessMode], signal
+  );
+  throwIfAborted(signal);
+
+  return rows.map((row) => ({ role: row.role, content: row.content }));
+}
+
+/**
+ * Renames a conversation owned by the requesting principal.
+ * @param {{ businessId: string, actorId: string, accessMode: string }} principal
+ * @param {string} conversationId
+ * @param {string} title
+ * @returns {Promise<boolean>} whether a conversation was actually renamed
+ */
+export async function renameConversation(principal, conversationId, title, { signal } = {}) {
+  const p = normalizePrincipal(principal);
+  if (!conversationId || typeof conversationId !== 'string' || !conversationId.trim()) {
+    throw new Error('conversationId is required');
+  }
+  const trimmedTitle = typeof title === 'string' ? title.trim() : '';
+  if (!trimmedTitle) {
+    throw new Error('title is required');
+  }
+
+  throwIfAborted(signal);
+  const { rows } = await runQuery(
+    `UPDATE conversations
+        SET title = $1,
+            updated_at = now()
+      WHERE id = $2
+        AND business_id = $3
+        AND actor_id = $4
+        AND access_mode = $5
+      RETURNING id`,
+    [trimmedTitle, conversationId.trim(), p.businessId, p.actorId, p.accessMode], signal
+  );
+  throwIfAborted(signal);
+
+  return rows.length > 0;
+}
+
+/**
+ * Deletes a conversation owned by the requesting principal. Its messages cascade via the
+ * existing messages_conversation_id_fkey ON DELETE CASCADE.
+ * @param {{ businessId: string, actorId: string, accessMode: string }} principal
+ * @param {string} conversationId
+ * @returns {Promise<boolean>} whether a conversation was actually deleted
+ */
+export async function deleteConversation(principal, conversationId, { signal } = {}) {
+  const p = normalizePrincipal(principal);
+  if (!conversationId || typeof conversationId !== 'string' || !conversationId.trim()) {
+    throw new Error('conversationId is required');
+  }
+
+  throwIfAborted(signal);
+  const { rows } = await runQuery(
+    `DELETE FROM conversations
+      WHERE id = $1
+        AND business_id = $2
+        AND actor_id = $3
+        AND access_mode = $4
+      RETURNING id`,
+    [conversationId.trim(), p.businessId, p.actorId, p.accessMode], signal
+  );
+  throwIfAborted(signal);
+
+  return rows.length > 0;
+}
+
+/**
  * Saves a durable business-context note carrying created_by.
  * Notes remain business-shared.
  * @param {{ businessId: string, actorId: string, accessMode: string }} principal

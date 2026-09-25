@@ -3,12 +3,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const chatHandlerMock = vi.fn();
 const resolveTrustedChatInputMock = vi.fn();
 const getDemoSessionIdFromCookieMock = vi.fn();
+const handleManagementActionMock = vi.fn();
 
 vi.mock('../handler.mjs', () => ({
   handler: chatHandlerMock,
   resolveTrustedChatInput: resolveTrustedChatInputMock,
   getDemoSessionIdFromCookie: getDemoSessionIdFromCookieMock,
 }));
+
+vi.mock('../history-actions.mjs', async () => {
+  const actual = await vi.importActual('../history-actions.mjs');
+  return { ...actual, handleManagementAction: handleManagementActionMock };
+});
 
 /** Minimal fake of a Lambda response-stream object: records every write() call and whether
  * end() was called, so tests can assert on the SSE bytes without a real Lambda runtime. */
@@ -36,6 +42,7 @@ beforeEach(() => {
   chatHandlerMock.mockReset();
   resolveTrustedChatInputMock.mockReset();
   getDemoSessionIdFromCookieMock.mockReset();
+  handleManagementActionMock.mockReset();
   resolveTrustedChatInputMock.mockResolvedValue({
     message: 'hi',
     principal: { businessId: 'demo-cafe', actorId: 'demo-session-00000000-0000-4000-8000-000000000000', accessMode: 'demo' },
@@ -252,5 +259,67 @@ describe('agent/lambda.mjs', () => {
     expect(responseStream.statusCode).toBe(400);
     expect(JSON.parse(textOf(responseStream))).toEqual({ error: 'Content-Type must be application/json.' });
     expect(resolveTrustedChatInputMock).not.toHaveBeenCalled();
+  });
+
+  describe('conversation-management actions (list/get/rename/delete)', () => {
+    it('routes a management action as a single buffered JSON response, never SSE, never resolveTrustedChatInput/chat', async () => {
+      handleManagementActionMock.mockResolvedValueOnce({ conversations: [{ id: 'c1', title: 'Chat', updatedAt: '2026-07-10T00:00:00.000Z' }] });
+
+      const { handler } = await import('../lambda.mjs');
+      const responseStream = fakeResponseStream();
+      await handler(
+        {
+          headers: { Authorization: 'Bearer t', 'content-type': 'application/json' },
+          body: JSON.stringify({ mode: 'authenticated', action: 'list_conversations', businessId: 'biz-1' }),
+        },
+        responseStream
+      );
+
+      expect(responseStream.statusCode).toBe(200);
+      expect(responseStream.headers['Content-Type']).toBe('application/json');
+      expect(JSON.parse(textOf(responseStream))).toEqual({
+        conversations: [{ id: 'c1', title: 'Chat', updatedAt: '2026-07-10T00:00:00.000Z' }],
+      });
+      expect(handleManagementActionMock).toHaveBeenCalledWith(
+        expect.objectContaining({ payload: { mode: 'authenticated', action: 'list_conversations', businessId: 'biz-1' } })
+      );
+      expect(resolveTrustedChatInputMock).not.toHaveBeenCalled();
+      expect(chatHandlerMock).not.toHaveBeenCalled();
+    });
+
+    it('responds with the action handler\'s statusCode and {error} body on failure', async () => {
+      const notFound = new Error('Conversation not found');
+      notFound.statusCode = 404;
+      handleManagementActionMock.mockRejectedValueOnce(notFound);
+
+      const { handler } = await import('../lambda.mjs');
+      const responseStream = fakeResponseStream();
+      await handler(
+        {
+          headers: { Authorization: 'Bearer t', 'content-type': 'application/json' },
+          body: JSON.stringify({ mode: 'authenticated', action: 'get_conversation', businessId: 'biz-1', conversationId: '11111111-1111-4111-8111-111111111111' }),
+        },
+        responseStream
+      );
+
+      expect(responseStream.statusCode).toBe(404);
+      expect(JSON.parse(textOf(responseStream))).toEqual({ error: 'Conversation not found' });
+    });
+
+    it('still enforces the rate limit and safe-browser-request checks for a management action', async () => {
+      process.env.WEB_ORIGIN = 'https://cafe-copilot.pages.dev';
+      const { handler } = await import('../lambda.mjs');
+      const responseStream = fakeResponseStream();
+      await handler(
+        {
+          headers: { Origin: 'https://attacker.example', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'authenticated', action: 'list_conversations', businessId: 'biz-1' }),
+        },
+        responseStream
+      );
+
+      expect(responseStream.statusCode).toBe(403);
+      expect(handleManagementActionMock).not.toHaveBeenCalled();
+    });
   });
 });
