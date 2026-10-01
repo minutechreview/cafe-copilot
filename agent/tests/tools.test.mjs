@@ -67,10 +67,13 @@ describe('agent/tools.mjs', () => {
   });
 
   describe('toolConfig', () => {
-    it('declares the seven contracted tools', async () => {
+    it('declares the operational and manager tools', async () => {
       const { toolConfig } = await import('../tools.mjs');
       const names = toolConfig.tools.map((t) => t.toolSpec.name);
       expect(names).toEqual([
+        'get_sales_report',
+        'get_stock_status',
+        'get_manager_page',
         'get_day_summary',
         'get_staff_performance',
         'get_waste_log',

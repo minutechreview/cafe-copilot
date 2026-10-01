@@ -115,6 +115,22 @@ describe('handler', () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
+  it('attaches authenticated report insights and safe page links only after successful tools', async () => {
+    const report = { kind: 'sales_report', start: '2026-07-01', end: '2026-07-02', gross: 12.345, pageLinks: [{ page: 'sales', start_date: '2026-07-01', end_date: '2026-07-02', href: 'https://bad.invalid' }] };
+    executeToolMock.mockResolvedValueOnce(report);
+    sendMock.mockResolvedValueOnce(toolUseStream({ toolUseId: 'sales', name: 'get_sales_report', inputChunks: '{"start_date":"2026-07-01","end_date":"2026-07-02"}' })).mockResolvedValueOnce(textStream('Your report is ready.'));
+    const events = await runAndCollectEvents({ message: 'Show my report', principal: { businessId: 'my-business', actorId: 'owner', accessMode: 'authenticated' }, reportContext: { timeZone: 'Asia/Kuwait', page: 'sales', start: '2026-07-01', end: '2026-07-02' } });
+    expect(events.at(-1)).toMatchObject({ type: 'done', insights: [report], pageLinks: [{ page: 'sales', to: '/dashboard/analytics?start=2026-07-01&end=2026-07-02' }] });
+    expect(executeToolMock).toHaveBeenCalledWith('get_sales_report', expect.any(Object), expect.objectContaining({ businessId: 'my-business', reportContext: expect.objectContaining({ timeZone: 'Asia/Kuwait' }) }));
+    expect(sendMock.mock.calls[0][0].input.system[0].text).toContain('never invent URLs');
+  });
+
+  it('rejects malformed display context before writing conversation memory', async () => {
+    await expect(runAndCollectEvents({ message: 'hello', reportContext: { timeZone: '<script>' } })).rejects.toMatchObject({ statusCode: 400 });
+    expect(createConversationMock).not.toHaveBeenCalled();
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
   describe('bufferedHandler (JSON-compat façade)', () => {
     it('answers directly when the model needs no tools, and persists both sides of the turn', async () => {
       sendMock.mockResolvedValueOnce(textStream('Hello, how can I help your cafe today?'));
@@ -260,7 +276,7 @@ describe('handler', () => {
       expect(executeToolMock).toHaveBeenCalledWith(
         'get_day_summary',
         { date: '2026-07-04' },
-        { businessId: 'demo-cafe', conversationId: 'abc-123', principal: EXPECTED_DEFAULT_PRINCIPAL, posClient: undefined }
+        expect.objectContaining({ businessId: 'demo-cafe', conversationId: 'abc-123', principal: EXPECTED_DEFAULT_PRINCIPAL, posClient: undefined })
       );
 
       const secondInput = sendMock.mock.calls[1][0].input;
@@ -563,7 +579,7 @@ describe('handler', () => {
       expect(executeToolMock).toHaveBeenCalledWith(
         'get_day_summary',
         { date: '2026-07-04' },
-        { businessId: 'demo-cafe', conversationId: 'abc-123', principal: EXPECTED_DEFAULT_PRINCIPAL, posClient: undefined }
+        expect.objectContaining({ businessId: 'demo-cafe', conversationId: 'abc-123', principal: EXPECTED_DEFAULT_PRINCIPAL, posClient: undefined })
       );
       expect(events.at(-1)).toEqual({
         type: 'done',

@@ -1,3 +1,4 @@
+import { managerToolSpecs, executeManagerTool } from './manager-tools.mjs';
 // Tool definitions + dispatch for the Café Copilot agent loop. handler.mjs owns the
 // send/execute/repeat loop; this module owns what each tool means and does, so the two can
 // be tested independently.
@@ -49,6 +50,7 @@ function isRealCalendarDate(value) {
 
 export const toolConfig = {
   tools: [
+    ...managerToolSpecs,
     {
       toolSpec: {
         name: 'get_day_summary',
@@ -623,6 +625,9 @@ async function runDraftPurchaseOrder(input, ctx) {
 }
 
 const TOOL_HANDLERS = {
+  get_sales_report: (input, ctx) => executeManagerTool('get_sales_report', input, ctx, localeOffset),
+  get_stock_status: (input, ctx) => executeManagerTool('get_stock_status', input, ctx, localeOffset),
+  get_manager_page: (input, ctx) => executeManagerTool('get_manager_page', input, ctx, localeOffset),
   get_day_summary: runGetDaySummary,
   get_staff_performance: runGetStaffPerformance,
   get_waste_log: runGetWasteLog,
