@@ -34,10 +34,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - name: Check out feat/chat-history-sidebar
+      - name: Check out main
         uses: actions/checkout@v4
-        with:
-          ref: feat/chat-history-sidebar
 
       - name: Set up Node
         uses: actions/setup-node@v4
