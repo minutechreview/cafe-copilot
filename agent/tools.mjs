@@ -1,4 +1,5 @@
 import { managerToolSpecs, executeManagerTool } from './manager-tools.mjs';
+import { productHelpToolSpec, getProductHelp } from './product-help.mjs';
 // Tool definitions + dispatch for the Café Copilot agent loop. handler.mjs owns the
 // send/execute/repeat loop; this module owns what each tool means and does, so the two can
 // be tested independently.
@@ -51,6 +52,7 @@ function isRealCalendarDate(value) {
 export const toolConfig = {
   tools: [
     ...managerToolSpecs,
+    productHelpToolSpec,
     {
       toolSpec: {
         name: 'get_day_summary',
@@ -625,6 +627,7 @@ async function runDraftPurchaseOrder(input, ctx) {
 }
 
 const TOOL_HANDLERS = {
+  get_product_help: getProductHelp,
   get_sales_report: (input, ctx) => executeManagerTool('get_sales_report', input, ctx, localeOffset),
   get_stock_status: (input, ctx) => executeManagerTool('get_stock_status', input, ctx, localeOffset),
   get_manager_page: (input, ctx) => executeManagerTool('get_manager_page', input, ctx, localeOffset),
@@ -641,7 +644,7 @@ export async function executeTool(name, input, ctx) {
   if (!ctx || typeof ctx !== 'object') {
     throw new Error('tool context is required');
   }
-  const run = TOOL_HANDLERS[name];
+  const run = Object.hasOwn(TOOL_HANDLERS, name) ? TOOL_HANDLERS[name] : null;
   if (!run) {
     throw new Error(`Unknown tool: ${name}`);
   }

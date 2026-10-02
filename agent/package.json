@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "node dev-server.mjs",
     "test": "vitest run",
+    "sync:guide": "node scripts/sync-product-guide.mjs",
+    "check:guide": "node scripts/sync-product-guide.mjs --check",
     "find-model": "node scripts/find-model.mjs",
     "find-embedding-model": "node scripts/find-embedding-model.mjs",
     "backfill": "node scripts/backfill-summaries.mjs",

@@ -18,7 +18,8 @@ function operationAwareFetch(input, init = {}) {
 }
 
 /**
- * Validates that the Supabase URL points strictly to the allowed POS staging project.
+ * Validates that the Supabase URL points strictly to the allowed consolidated POS project.
+ * The project was historically staging; Kade production has used it since September 2026.
  * Enforces HTTPS, exact hostname, no user credentials, and default port (443).
  * @param {string} url
  */

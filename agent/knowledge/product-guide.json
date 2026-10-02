@@ -1,0 +1,1429 @@
+{
+  "version": "1.0.0",
+  "product": "Kade",
+  "updatedAt": "2026-10-02",
+  "baseUrl": "https://project-pos.pages.dev",
+  "description": "A plain-language guide to the features currently available in Kade POS. The PDF manual and Ask product help use this same source.",
+  "articles": [
+    {
+      "id": "sign-in-and-account",
+      "title": "Sign in to your shop",
+      "route": "/login",
+      "section": "Your first day",
+      "summary": "The shop account opens Kade on a device. A separate staff PIN identifies the person using the register.",
+      "steps": [
+        "Open Kade and choose Sign In. Enter the shop account email and password.",
+        "For a new business, choose Create Account and follow the email confirmation instructions if shown.",
+        "Complete first-time business setup, then choose a register and sign in with your staff PIN."
+      ],
+      "keywords": [
+        "login",
+        "sign in",
+        "account",
+        "email",
+        "password",
+        "register owner",
+        "new shop"
+      ],
+      "pages": [
+        "login",
+        "till"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "A staff PIN does not create a separate online account. Keep the shop password private and use each person's own PIN at the till."
+      ]
+    },
+    {
+      "id": "reset-password",
+      "title": "Recover a forgotten password",
+      "route": "/reset-password",
+      "section": "Your first day",
+      "summary": "Reset the shop account password through the sign-in page. A forgotten staff PIN is changed by an owner or manager under Staff & PINs.",
+      "steps": [
+        "On the sign-in page, choose Forgot password and enter the account email.",
+        "Open the recovery link from that email. Choose a new password, type it again and save.",
+        "Return to the till and use your staff PIN as usual."
+      ],
+      "keywords": [
+        "forgot password",
+        "reset password",
+        "recovery email",
+        "forgot PIN"
+      ],
+      "pages": [
+        "password",
+        "staff",
+        "till"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "Opening the recovery email does not finish the password change. Save the new password first."
+      ]
+    },
+    {
+      "id": "first-time-setup",
+      "title": "Set up a new business",
+      "route": "/setup",
+      "section": "Your first day",
+      "summary": "The five-step setup prepares the shop, register preferences and customer-facing outputs.",
+      "steps": [
+        "Enter the business name and type. Choose the service style and order types you use, such as takeaway or dine-in.",
+        "Choose device preferences, register count and whether to use the Kitchen display. Quick kitchen flow uses Paid and Ready; full flow adds Being made. Enable packet scanning if needed.",
+        "Choose the customer languages and currency. Add contact details, an optional logo and a four-digit owner PIN.",
+        "Finish setup, continue to the till and check Menu items before selling. Starter items, when supplied, need your prices and availability."
+      ],
+      "keywords": [
+        "setup",
+        "onboarding",
+        "new business",
+        "languages",
+        "currency",
+        "logo",
+        "kitchen flow",
+        "quick",
+        "full"
+      ],
+      "pages": [
+        "setup",
+        "settings",
+        "menu",
+        "till"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "cautions": [
+        "Setup is for a new business. It is not an editor for an existing shop. Current settings are found under Team & setup, Menu items and Recipes.",
+        "The staff interface is English. Customer receipts and the menu can use the configured English, Arabic, Sinhala and Tamil content."
+      ]
+    },
+    {
+      "id": "workspace-navigation",
+      "title": "Find the right screen",
+      "route": "/dashboard",
+      "section": "Find your way around",
+      "summary": "Bottom navigation keeps daily work close. Owners and managers also have a business workspace with clear sections.",
+      "steps": [
+        "Use Till to make a sale. Orders opens the current register shift's receipts. Kitchen appears only when the Kitchen display is enabled.",
+        "Owners and managers choose Manage for Overview, Close the day, Reports, Products & stock, and Team & setup.",
+        "On a phone, open the business workspace's Menu control to reveal its sections. On the till, use Products and Order check to switch between the product grid and the check.",
+        "Use the top Leave register icon to return to staff PIN selection. Use the Sign out of this shop icon to end the device account session."
+      ],
+      "keywords": [
+        "navigation",
+        "where",
+        "dashboard",
+        "backend",
+        "advanced menu",
+        "phone",
+        "mobile",
+        "bottom menu",
+        "manage"
+      ],
+      "pages": [
+        "overview",
+        "till",
+        "kitchen",
+        "settings"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "Manage and Ask are for owners and managers with the required signed-in access. A service staff PIN does not reveal manager reports."
+      ]
+    },
+    {
+      "id": "overview-and-section-hubs",
+      "title": "Use the business overview and section menus",
+      "route": "/dashboard",
+      "section": "Find your way around",
+      "summary": "Overview brings together the day's activity and shortcuts. Reports and Products & stock are menus that lead to the detailed pages.",
+      "steps": [
+        "Open Manage to see the business Overview and its current sales, stock and cash information.",
+        "Choose Reports for Sales report, Daily report, Cash history, Team performance or Waste report.",
+        "Choose Products & stock for Menu items, Stock & suppliers or Recipes. Choose Team & setup for people, registers and business settings."
+      ],
+      "keywords": [
+        "overview",
+        "home",
+        "reports menu",
+        "products and stock",
+        "business workspace",
+        "shortcuts"
+      ],
+      "pages": [
+        "overview",
+        "sales",
+        "stock",
+        "settings"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "Use the detailed report for the dates and explanation behind a summary figure."
+      ]
+    },
+    {
+      "id": "reports-menu",
+      "title": "Open the report you need",
+      "route": "/dashboard/report-center",
+      "section": "Find your way around",
+      "summary": "Reports groups sales, a full day, drawer counts, individual people and waste in one place.",
+      "steps": [
+        "Open Manage, then Reports.",
+        "Choose Sales report for trends and item performance, Daily report for a day including cash movements, or Cash history for closed drawer counts.",
+        "Choose Team performance for a person's shifts or Waste report for waste and items given away."
+      ],
+      "keywords": [
+        "reports",
+        "report center",
+        "analytics",
+        "find report",
+        "graphs"
+      ],
+      "pages": [
+        "reports",
+        "sales",
+        "daily",
+        "cash"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": []
+    },
+    {
+      "id": "products-menu",
+      "title": "Find products, stock and recipes",
+      "route": "/dashboard/products",
+      "section": "Find your way around",
+      "summary": "Products & stock separates the products you sell from the supplies you count.",
+      "steps": [
+        "Open Manage, then Products & stock.",
+        "Choose Menu items to manage product names, selling prices, custom options and availability.",
+        "Choose Stock & suppliers for ingredient counts and suppliers. Choose Recipes to link counted ingredients to products."
+      ],
+      "keywords": [
+        "products",
+        "stock",
+        "ingredients",
+        "menu",
+        "recipes",
+        "supplier",
+        "product list"
+      ],
+      "pages": [
+        "products",
+        "menu",
+        "stock",
+        "recipes"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "A selling product and a counted stock item are separate records. Adding one does not automatically create the other."
+      ]
+    },
+    {
+      "id": "start-register-shift",
+      "title": "Start a register shift",
+      "route": "/till",
+      "section": "Open and protect a register",
+      "summary": "Choose the physical register, identify the cashier and record the cash already in its drawer.",
+      "steps": [
+        "Open Till and choose the register assigned to this device.",
+        "Select your staff profile and enter your four-digit PIN. The app checks the PIN after the fourth digit.",
+        "Count the physical opening cash. Check the suggested cash float and enter the actual amount, including zero when appropriate.",
+        "Choose Start Shift. If another person has an open shift on that register, have it closed before starting a new one."
+      ],
+      "keywords": [
+        "start shift",
+        "open shift",
+        "register",
+        "PIN login",
+        "cashier",
+        "opening float",
+        "start day"
+      ],
+      "pages": [
+        "till",
+        "registers",
+        "staff"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "One physical register has one open shift. Signing in as a different person does not transfer ownership of that shift."
+      ]
+    },
+    {
+      "id": "leave-signout-close",
+      "title": "Leave, sign out or close: which one?",
+      "route": "/till",
+      "section": "Open and protect a register",
+      "summary": "Leave register changes who is using the device. Sign out of this shop ends the account session. Close register counts cash and finishes the shift.",
+      "steps": [
+        "For a break, use Leave register. The device returns to staff PIN selection; the open shift stays open.",
+        "To end the shop account session on this device, use Sign out of this shop. Another account sign-in is needed to return.",
+        "At a shift change or at closing, use Close register, count the cash and get owner or manager PIN approval. Wait for the saved close summary."
+      ],
+      "keywords": [
+        "leave register",
+        "logout",
+        "sign out",
+        "cashout",
+        "close shift",
+        "break",
+        "switch cashier",
+        "end day"
+      ],
+      "pages": [
+        "till",
+        "close"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "Leaving or signing out does not close a shift or save a drawer count. Finish or park your current check before leaving."
+      ]
+    },
+    {
+      "id": "add-products-to-sale",
+      "title": "Add products to a check",
+      "route": "/till",
+      "section": "Make a sale",
+      "summary": "Tap a product card once to add one. Repeated taps add more of the same plain product.",
+      "steps": [
+        "Search for a product or choose its category, then tap the product card.",
+        "If the product has no custom options, it goes straight to the check. Tap again to add another.",
+        "Review the Order check. Use its quantity controls to increase or decrease a line, or its remove control to remove that line.",
+        "On a phone, choose Order check to review the sale, then Products to return to the grid."
+      ],
+      "keywords": [
+        "add product",
+        "tap",
+        "bread",
+        "cappuccino",
+        "quantity",
+        "check",
+        "cart",
+        "remove item",
+        "search",
+        "category"
+      ],
+      "pages": [
+        "till"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "An unavailable product cannot be added to a sale. Check item availability under Menu items or the kitchen availability panel."
+      ]
+    },
+    {
+      "id": "choose-product-options",
+      "title": "Choose sizes and custom options",
+      "route": "/till",
+      "section": "Make a sale",
+      "summary": "Products with configured options open a selection card before they are added to the check.",
+      "steps": [
+        "Tap the product. Choose the size, milk, toppings or other options shown.",
+        "Fill every required group. A group can limit how many options may be chosen.",
+        "Check the price on Add to Order, then choose it. The check shows your choices and the total including any extra charges.",
+        "Choose Cancel to leave the card without adding the product. Owners and managers configure these groups under Menu items."
+      ],
+      "keywords": [
+        "size",
+        "customize",
+        "customisation",
+        "customization",
+        "milk",
+        "modifiers",
+        "extras",
+        "toppings",
+        "required options"
+      ],
+      "pages": [
+        "till",
+        "menu"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "The app waits for product options before allowing payment. If options cannot load, retry instead of assuming the product has none."
+      ]
+    },
+    {
+      "id": "record-payment",
+      "title": "Record a payment and finish the sale",
+      "route": "/till",
+      "section": "Make a sale",
+      "summary": "Take Payment saves the order with its payment method. Kade records cash or card; it does not charge a card or move money.",
+      "steps": [
+        "Review products, quantities, custom choices and the total in the check.",
+        "Choose the order type and payment method shown for your shop. Take the customer's cash or complete payment on your separate card terminal.",
+        "Choose Take Payment once and wait for the result. When Kitchen display is on, the paid order goes to the kitchen; when off, it finishes at checkout.",
+        "After confirmation, use Print receipt to open the receipt preview."
+      ],
+      "keywords": [
+        "payment",
+        "checkout",
+        "cash",
+        "card",
+        "take payment",
+        "terminal",
+        "receipt",
+        "order complete",
+        "send kitchen"
+      ],
+      "pages": [
+        "till",
+        "kitchen",
+        "settings"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "Cash/card is a recording choice, not integrated payment processing. Handle any actual charge or returned money through your usual payment method.",
+        "If the app reports a saved order waiting to send, it has not yet confirmed the order in the cloud. See the connection guidance before entering it again."
+      ]
+    },
+    {
+      "id": "scan-a-product",
+      "title": "Scan a packet or type its barcode",
+      "route": "/till",
+      "section": "Scan and save checks",
+      "summary": "Scanning adds products already in your shop's list. For a new barcode, add and check the product details yourself.",
+      "steps": [
+        "If scanning is absent, ask an owner or manager to enable Scan packets at the till under Menu items.",
+        "Choose Use camera and allow camera access, or choose Type barcode and enter the number on the packet.",
+        "A known, available product follows the normal add-to-check flow, including custom options if configured.",
+        "For an unknown number, choose Add this product. Check any public-list suggestion, enter the name, category and your selling price, then save. The new product is added to the check."
+      ],
+      "keywords": [
+        "scan",
+        "barcode",
+        "camera",
+        "grocery",
+        "packet",
+        "unknown product",
+        "catalog",
+        "catalogue",
+        "look up",
+        "local brands"
+      ],
+      "pages": [
+        "till",
+        "menu"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "Camera access needs a supported browser and permission. Type barcode is the alternative when the camera cannot scan.",
+        "Public product details and photos can be missing or wrong. A match never decides your selling price; check the product and set the price yourself.",
+        "Your role must have permission to create products. If saving is refused, ask an owner or manager to add it under Menu items."
+      ]
+    },
+    {
+      "id": "park-and-resume-order",
+      "title": "Save a check for later",
+      "route": "/till",
+      "section": "Scan and save checks",
+      "summary": "Park a check before payment, then resume it from Parked Orders during the same register shift.",
+      "steps": [
+        "With products in the check, choose its Save this order for later control.",
+        "The check is saved and cleared so you can serve another customer.",
+        "Choose Parked Orders on the till and Resume the required order. Check its products and prices before taking payment.",
+        "Delete a parked order only when you no longer need it; confirm the deletion prompt."
+      ],
+      "keywords": [
+        "park",
+        "parked orders",
+        "hold",
+        "save order",
+        "resume",
+        "suspend",
+        "later",
+        "unpaid check"
+      ],
+      "pages": [
+        "till"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "Parking is not taking payment and does not send the check to the kitchen. Parked Orders is scoped to the current register shift and needs a connection to save or load."
+      ]
+    },
+    {
+      "id": "receipts-and-reprint",
+      "title": "Find, print or save a receipt",
+      "route": "/till?orders=1",
+      "section": "Receipts and sale corrections",
+      "summary": "Orders opens Receipt History for the current register shift. Receipts preserve the prices stored on the sale.",
+      "steps": [
+        "Choose Orders in the bottom navigation, or Till functions followed by Orders & receipts.",
+        "Find the sale by order number, payment method or order type. Choose View / Reprint.",
+        "Review the receipt, then choose Print / Save as PDF. Use the browser's print dialog to select a printer or Save as PDF.",
+        "Receipts show the configured customer languages. Use the manager Sales report for older sales beyond the current shift's receipt list."
+      ],
+      "keywords": [
+        "receipt",
+        "reprint",
+        "orders",
+        "order history",
+        "invoice",
+        "print",
+        "PDF",
+        "previous sale"
+      ],
+      "pages": [
+        "orders",
+        "till",
+        "sales"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "Printing uses the browser and the device's printer setup. Kade does not guarantee automatic receipt-printer or cash-drawer hardware control.",
+        "The current Receipt History is a shift list, not an all-time receipt archive."
+      ]
+    },
+    {
+      "id": "refund-or-void",
+      "title": "Refund or void a sale",
+      "route": "/till?orders=1",
+      "section": "Receipts and sale corrections",
+      "summary": "A refund records returned money. A void cancels a sale. Both need an owner or manager approval PIN and a reason.",
+      "steps": [
+        "Open Orders, find the sale and choose Refund or Void.",
+        "Have an owner or manager enter their four-digit approval PIN.",
+        "For a refund, enter the amount, up to the sale total. Enter a clear reason and submit the correction.",
+        "Wait for confirmation and check the sale's Refunded or Voided label. Return money through the original payment method separately."
+      ],
+      "keywords": [
+        "refund",
+        "void",
+        "cancel sale",
+        "partial refund",
+        "manager approval",
+        "approval PIN",
+        "return money"
+      ],
+      "pages": [
+        "orders",
+        "till",
+        "staff",
+        "daily"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "The app records the correction; it does not send money to a card or bank account.",
+        "Refund and Void controls disappear after the sale has an adjustment. Do not assume multiple separate refunds are supported on the same sale.",
+        "Do not use the kitchen Cancel order control as a substitute for recording returned money."
+      ]
+    },
+    {
+      "id": "kitchen-optional-switch",
+      "title": "Turn Kitchen display on or off",
+      "route": "/dashboard/settings",
+      "section": "Kitchen and waste",
+      "summary": "An owner or manager can switch Kitchen display under Team & setup, in Business profile. It saves as soon as the change succeeds.",
+      "steps": [
+        "Open Manage, choose Team & setup and find Business profile.",
+        "Use the Kitchen display switch. Wait for Kitchen display is on or Kitchen display is off.",
+        "When off, Kitchen disappears from navigation and direct kitchen access is blocked. New paid orders finish at checkout, while receipts and sales reports continue.",
+        "Turn it on again to restore Kitchen navigation and access. Existing kitchen tickets remain saved and return."
+      ],
+      "keywords": [
+        "KDS",
+        "disable kitchen",
+        "enable kitchen",
+        "kitchen display",
+        "off",
+        "on",
+        "settings",
+        "restaurant no kitchen",
+        "blocker"
+      ],
+      "pages": [
+        "settings",
+        "kitchen",
+        "till"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "Turning Kitchen display off does not cancel, finish or delete earlier kitchen tickets. Review any earlier tickets when re-enabling it.",
+        "Wait for the saved status. If saving fails, the previous setting remains in effect. Other devices need a connection to receive the change."
+      ]
+    },
+    {
+      "id": "work-kitchen-tickets",
+      "title": "Move a kitchen ticket through service",
+      "route": "/kds",
+      "section": "Kitchen and waste",
+      "summary": "Kitchen shows paid orders and their custom choices. The flow depends on the kitchen mode chosen for the business.",
+      "steps": [
+        "Open Kitchen and use its active tickets view. Read the order number, quantities and custom options before preparing it.",
+        "In quick flow, move a ticket from Paid to Ready. In full flow, choose Start cooking, then Done cooking to move it through New, Being made and Ready.",
+        "Choose Serve order when the order is handed over. This completes the order and removes it from the active queue.",
+        "Use Today's Log to review the day's tickets. Use Cancel order only for an order that should be cancelled and confirm the prompt."
+      ],
+      "keywords": [
+        "kitchen",
+        "KDS",
+        "ticket",
+        "paid",
+        "ready",
+        "new",
+        "preparing",
+        "start cooking",
+        "done cooking",
+        "serve order",
+        "today log"
+      ],
+      "pages": [
+        "kitchen",
+        "settings",
+        "till"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "Sales totals count completed orders. A paid ticket still waiting in Kitchen is not counted as completed sales yet.",
+        "Cancelling a kitchen ticket excludes that cancelled order from sales, but does not process a money refund. Use the till refund workflow when returning money.",
+        "Kitchen requires a connection for live tickets and status changes."
+      ]
+    },
+    {
+      "id": "availability-and-waste",
+      "title": "Mark an item unavailable or log waste",
+      "route": "/kds",
+      "section": "Kitchen and waste",
+      "summary": "Availability controls what can be sold. A waste or comp log records products thrown away or given away.",
+      "steps": [
+        "In Kitchen, choose Manage Availability and find the item in Item Availability. Switch it out of stock to stop staff adding it to new sales; restore it when available.",
+        "To log waste or an item given away, open Till functions and choose Log waste.",
+        "Choose the product, quantity and reason, such as spoilage, on the house, training, complaint or staff meal. Add the person's name if useful, then Save Log.",
+        "Owners and managers review these entries in Waste report."
+      ],
+      "keywords": [
+        "availability",
+        "out of stock",
+        "sold out",
+        "waste",
+        "comp",
+        "giveaway",
+        "on the house",
+        "spoilage",
+        "staff meal",
+        "log waste"
+      ],
+      "pages": [
+        "kitchen",
+        "till",
+        "waste",
+        "menu"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "A waste log is not a paid sale, refund or stock count. Continue physical stock counts; do not assume every waste entry automatically subtracts an ingredient."
+      ]
+    },
+    {
+      "id": "cash-movements-no-sale",
+      "title": "Record cash added, cash taken out and No Sale",
+      "route": "/till",
+      "section": "Cash and closing",
+      "summary": "Use Till functions to explain cash movements that are not customer sales.",
+      "steps": [
+        "For money put into the drawer, choose Paid-In. For money removed, choose Paid-Out.",
+        "Enter a positive amount and a clear reason, then choose Save Petty Cash. Record each movement when it happens.",
+        "Use No Sale to record opening the drawer without a sale.",
+        "Review cash movements in the Daily report. For a mistaken paid-in or paid-out entry, use its approved Undo or Fix amount workflow there."
+      ],
+      "keywords": [
+        "paid in",
+        "paid out",
+        "petty cash",
+        "cash movement",
+        "money out",
+        "money in",
+        "no sale",
+        "drawer"
+      ],
+      "pages": [
+        "till",
+        "daily"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "No Sale logs a drawer opening. It is not a hardware promise that a connected drawer will open automatically.",
+        "Paid-In and Paid-Out affect expected drawer cash; they are not product sales."
+      ]
+    },
+    {
+      "id": "close-register-shift",
+      "title": "Count cash and close a register",
+      "route": "/till?close=1",
+      "section": "Cash and closing",
+      "summary": "Close register saves the drawer count and finishes that register's shift after owner or manager approval.",
+      "steps": [
+        "Finish current sales and let any saved orders waiting to send clear. On the till choose Close register, or Till functions then Close shift.",
+        "Count all physical cash in the drawer, including its opening float. Enter the counted total and choose Continue.",
+        "Have an owner or manager enter the four-digit approval PIN. Wait for Shift Closed Successfully.",
+        "Review expected cash, counted cash, over or short and cash to bank. Leave the stated cash float in the drawer, then choose Done & Log Out."
+      ],
+      "keywords": [
+        "close register",
+        "cashout",
+        "cash out",
+        "closing count",
+        "blind count",
+        "close shift",
+        "bank cash",
+        "over short",
+        "end shift"
+      ],
+      "pages": [
+        "register_close",
+        "till",
+        "close",
+        "cash"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "Counted cash is entered before the expected amount is shown. Count the actual drawer, rather than copying an expected number.",
+        "A close is complete only after the saved success summary. If it fails, keep the shift open and retry when connected."
+      ]
+    },
+    {
+      "id": "close-the-day",
+      "title": "Finish the business day",
+      "route": "/dashboard/close",
+      "section": "Cash and closing",
+      "summary": "Close the day guides the manager through separate register closes and the final daily report.",
+      "steps": [
+        "Open Manage then Close the day. Refresh registers to see which shifts are still open.",
+        "For the current register, choose Close this register. For another register, use its assigned device and complete the same cash-count and approval flow.",
+        "Check that all required shifts have closed. Open the Daily report for the correct day and review sales, cash counts and exceptions.",
+        "Use Print / Save as PDF to save a copy. Open Cash history if a closed drawer count needs checking."
+      ],
+      "keywords": [
+        "end of day",
+        "close day",
+        "close the day",
+        "cashout",
+        "registers still open",
+        "daily close",
+        "final report"
+      ],
+      "pages": [
+        "close",
+        "daily",
+        "cash",
+        "till"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "This screen guides individual shift closes; it does not lock the business date. A later shift or correction can change a report.",
+        "Open shifts are not included in closed-shift cash counts. Save the final report after the required register closes."
+      ]
+    },
+    {
+      "id": "sales-report-and-dates",
+      "title": "Read a sales report and its graphs",
+      "route": "/dashboard/analytics",
+      "section": "Sales and daily reports",
+      "summary": "Sales report shows trends, payment and order-type splits, best-selling items and individual orders for chosen dates.",
+      "steps": [
+        "Open Manage, Reports, Sales report. Choose a date shortcut or enter From and To dates, then Apply dates.",
+        "Read Gross sales, Completed orders, Average order, Refunds in this period and Net after refunds, then review the trend and split graphs.",
+        "Use Best-selling items to compare quantities and item sales. Search Order details by number, status or type and use its page controls.",
+        "Use Print / Save as PDF for the full report. Open Download CSV and choose the breakdown you need."
+      ],
+      "keywords": [
+        "sales",
+        "analytics",
+        "graphs",
+        "chart",
+        "date",
+        "today",
+        "weekly",
+        "monthly",
+        "gross",
+        "net",
+        "completed orders",
+        "CSV",
+        "export",
+        "PDF"
+      ],
+      "pages": [
+        "sales"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "Only completed orders contribute to sales totals; Order details also shows other statuses. Sales are grouped by the order's recorded date, and refunds by when the refund was recorded.",
+        "Net after refunds is gross sales less refunds recorded in the chosen period. It is not profit and can include refunds of earlier sales.",
+        "Dates use this device's local calendar and include both selected days. Today is still in progress. The comparison uses the same number of days immediately before the range; choose up to one year."
+      ]
+    },
+    {
+      "id": "daily-report",
+      "title": "Review the full daily report",
+      "route": "/dashboard/endofday",
+      "section": "Sales and daily reports",
+      "summary": "Daily report brings together completed sales, payment types, closed shifts, refunds, voids and cash movements for one day.",
+      "steps": [
+        "Open Manage, Reports, Daily report and choose Report date.",
+        "Review the sales summary and splits, then the closed-shift reconciliation table.",
+        "Read refunds, voids and cash added or taken out. Check reasons and any corrected or undone entries.",
+        "Use Print / Save as PDF to save the report after reviewing the day's register closes."
+      ],
+      "keywords": [
+        "daily report",
+        "endofday",
+        "end of day",
+        "PDF",
+        "cash movements",
+        "exceptions",
+        "day summary",
+        "reconciliation"
+      ],
+      "pages": [
+        "daily",
+        "close",
+        "cash"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "Sales and cash movements use their recorded times. A shift appears in the day's cash reconciliation when it was closed, even if it opened on an earlier day.",
+        "The day uses the device's local calendar. Keep register devices on the shop's intended time zone to compare dates consistently."
+      ]
+    },
+    {
+      "id": "cash-history-correct-count",
+      "title": "Check or correct a closed drawer count",
+      "route": "/dashboard/cash",
+      "section": "Cash history and corrections",
+      "summary": "Cash history compares expected and counted cash for closed shifts and keeps approved corrections with their reasons.",
+      "steps": [
+        "Open Manage, Reports, Cash history. Set From and To dates and find the register and staff member.",
+        "Compare opening float, expected cash, counted cash, over or short, cash to bank and the close approver.",
+        "For a counting mistake, choose Fix count. Enter the corrected counted amount, give the reason and enter an owner or manager approval PIN.",
+        "Review the updated count. Open Corrected to see the original value, correction and approver."
+      ],
+      "keywords": [
+        "cash history",
+        "fix count",
+        "correction",
+        "counted cash",
+        "expected cash",
+        "variance",
+        "over",
+        "short",
+        "banked",
+        "drawer count"
+      ],
+      "pages": [
+        "cash",
+        "daily"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "Expected cash starts with opening float, adds cash sales and paid-in money, then subtracts cash refunds and paid-out money. Card payments are not drawer cash.",
+        "Fix count corrects a saved count; it does not reopen a shift or erase the earlier record. Older records may show a dash where information was not captured."
+      ]
+    },
+    {
+      "id": "correct-cash-movement",
+      "title": "Undo a mistaken cash entry or fix its amount",
+      "route": "/dashboard/endofday",
+      "section": "Cash history and corrections",
+      "summary": "A mistaken paid-in or paid-out entry is corrected in the Daily report, with a reason and approval.",
+      "steps": [
+        "Open Daily report and select the day containing the paid-in or paid-out entry.",
+        "Choose Undo if the entry should not exist, or Fix amount if the cash movement happened with a different amount.",
+        "Enter the new amount when asked, explain the correction and enter an owner or manager approval PIN.",
+        "Review the updated cash figures and the original entry marked Undone or replaced."
+      ],
+      "keywords": [
+        "undo",
+        "fix amount",
+        "petty cash correction",
+        "reverse",
+        "wrong amount",
+        "paid out mistake",
+        "paid in mistake"
+      ],
+      "pages": [
+        "daily",
+        "cash"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "Corrections keep the earlier record and reason. Correct the record that is wrong; do not create an opposite cash movement just to hide a mistake."
+      ]
+    },
+    {
+      "id": "team-performance",
+      "title": "Review one person's shifts",
+      "route": "/dashboard/reports",
+      "section": "Team and waste reports",
+      "summary": "Team performance shows each person's sales and shift accountability across chosen dates.",
+      "steps": [
+        "Open Manage, Reports, Team performance, or use Individual staff performance under Team & setup.",
+        "Choose From and To dates. Find the person and expand their card to see individual shifts.",
+        "Review completed sales, order counts, drawer openings and the expected/count/banked figures available for each shift.",
+        "Read refunds approved and voids approved as approvals by that person, rather than sales they originally rang up."
+      ],
+      "keywords": [
+        "team",
+        "staff performance",
+        "partner",
+        "individual",
+        "staff report",
+        "cashier sales",
+        "shifts",
+        "approvals"
+      ],
+      "pages": [
+        "team",
+        "staff",
+        "settings"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "Open shifts do not yet have final drawer counts. This is a shift accountability report, not a payroll or dedicated attendance system."
+      ]
+    },
+    {
+      "id": "waste-report",
+      "title": "Review waste and items given away",
+      "route": "/dashboard/waste",
+      "section": "Team and waste reports",
+      "summary": "Waste report shows recent waste and comp entries, reasons, quantities and approximate value.",
+      "steps": [
+        "Open Manage, Reports, Waste report.",
+        "Review the recent seven-day summary and most common reason.",
+        "Read each recent event for its product, quantity, reason, time and person when recorded.",
+        "Use the patterns to improve ordering or staff training, and recount ingredients where needed."
+      ],
+      "keywords": [
+        "waste report",
+        "comp report",
+        "giveaway",
+        "spoilage",
+        "last 7 days",
+        "waste value",
+        "food loss"
+      ],
+      "pages": [
+        "waste",
+        "till",
+        "stock"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "Waste value uses current menu prices. It is an approximation, not historical ingredient cost or profit loss."
+      ]
+    },
+    {
+      "id": "manage-menu-products",
+      "title": "Add or edit selling products",
+      "route": "/dashboard/menu",
+      "section": "Products and the customer menu",
+      "summary": "Menu items manages the product list used by the till and the customer menu.",
+      "steps": [
+        "Open Manage, Products & stock, Menu items. Choose Add product or edit an existing item.",
+        "Enter the product name, category and selling price. Fill translated names for the customer languages in use.",
+        "If scanning is enabled, add the barcode and optional packet details. Check any public-list lookup before saving.",
+        "Use search and the active/available filters to find an item. Set availability for a temporary sell-out; use the menu's active controls when the item should be removed from the current menu."
+      ],
+      "keywords": [
+        "menu items",
+        "add product",
+        "edit product",
+        "price",
+        "category",
+        "translated name",
+        "active",
+        "available",
+        "product code",
+        "scan setting"
+      ],
+      "pages": [
+        "menu",
+        "till",
+        "catalog"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "Availability and active menu status are separate. A sold-out item can stay on your managed list while being unavailable for new sales.",
+        "Earlier sale prices remain stored with the sale. A product's name in some reports comes from the current menu."
+      ]
+    },
+    {
+      "id": "configure-modifiers",
+      "title": "Set up sizes, extras and required choices",
+      "route": "/dashboard/menu",
+      "section": "Products and the customer menu",
+      "summary": "Use a saved product's Modifiers tab to configure choices shown when staff tap that product.",
+      "steps": [
+        "Open or save the product first, then choose its Modifiers tab.",
+        "Add a group, such as Size or Milk, and decide whether a choice is required.",
+        "Add the options and each option's extra cost. Include translated option names where useful.",
+        "Open the product on the till and check its selection card and resulting price before using it for customer sales."
+      ],
+      "keywords": [
+        "configure sizes",
+        "modifiers",
+        "extras",
+        "option group",
+        "required",
+        "size",
+        "add-ons",
+        "price delta",
+        "milk options"
+      ],
+      "pages": [
+        "menu",
+        "till"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "Custom choices only appear for products with configured groups. Deleting a group or option changes the choices available for future sales."
+      ]
+    },
+    {
+      "id": "customer-menu",
+      "title": "Show or print the customer menu",
+      "route": "/menu",
+      "section": "Products and the customer menu",
+      "summary": "The customer menu is a clean display of product names, categories and base prices in the configured languages.",
+      "steps": [
+        "Open the customer menu on a signed-in shop device.",
+        "Choose a language shown in the menu controls to display the corresponding names.",
+        "Use Print / Save as PDF to make a menu copy through the browser's print dialog.",
+        "Choose its back control to return to the till. Update products and translated names under Menu items."
+      ],
+      "keywords": [
+        "customer menu",
+        "menu board",
+        "print menu",
+        "Arabic",
+        "Sinhala",
+        "Tamil",
+        "English",
+        "language",
+        "catalog"
+      ],
+      "pages": [
+        "catalog",
+        "menu",
+        "till"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "This route requires shop sign-in; it is not a public ordering or QR-ordering service. Custom choices are intentionally omitted from the menu's base-price display."
+      ]
+    },
+    {
+      "id": "count-stock-suppliers",
+      "title": "Count stock and add supplier details",
+      "route": "/dashboard/inventory",
+      "section": "Stock and recipes",
+      "summary": "Stock & suppliers holds ingredients and supplies, physical counts, low-stock levels and supplier details.",
+      "steps": [
+        "Open Manage, Products & stock, Stock & suppliers and choose Add Item.",
+        "Enter the name and unit, such as litres, kilograms or pieces. Select a supplier or add one with its contact number and lead time.",
+        "Set the minimum warning level and usual full amount if useful. These help identify Running low or Getting low items.",
+        "Choose Count on an item and enter the total quantity you physically have now, not the amount just delivered. Add the counter's name if useful, then Save Stock Count."
+      ],
+      "keywords": [
+        "stock",
+        "inventory",
+        "count",
+        "supplier",
+        "WhatsApp",
+        "unit",
+        "minimum",
+        "par",
+        "low stock",
+        "delivery",
+        "recount"
+      ],
+      "pages": [
+        "stock",
+        "recipes"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "A stock count replaces the recorded quantity with the current physical total. Keep units consistent across counts and recipes.",
+        "If a notice says sales usage did not match stock, recount the ingredient. Stock is not silently driven below zero.",
+        "A supplier contact link opens your messaging app; you still choose and send any message yourself."
+      ]
+    },
+    {
+      "id": "recipe-stock-tracking",
+      "title": "Link recipes to stock counts",
+      "route": "/dashboard/recipes",
+      "section": "Stock and recipes",
+      "summary": "Optional recipe tracking subtracts linked ingredient quantities when an order completes.",
+      "steps": [
+        "Create and count ingredients in Stock & suppliers first.",
+        "Open Recipes and turn on Track ingredients automatically if your shop wants this behavior.",
+        "Expand a product, choose an ingredient and enter the quantity used per one product in the ingredient's stored unit. Add the link and repeat for other ingredients.",
+        "Check recipe quantities carefully and continue physical stock counts. Turn the switch off when you want to stop automatic ingredient tracking."
+      ],
+      "keywords": [
+        "recipe",
+        "automatic stock",
+        "depletion",
+        "ingredient",
+        "per unit",
+        "track ingredients",
+        "stock not tracked",
+        "turn off recipes"
+      ],
+      "pages": [
+        "recipes",
+        "stock",
+        "menu"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "Products without a recipe do not change ingredient stock automatically. With Kitchen display on, usage is recorded when an order completes; with it off, the paid order completes at checkout.",
+        "Turning recipe tracking off keeps existing recipe links but stops automatic tracking. This is not ingredient costing or full accounting."
+      ]
+    },
+    {
+      "id": "staff-and-pins",
+      "title": "Manage people and staff PINs",
+      "route": "/dashboard/staff",
+      "section": "People and business settings",
+      "summary": "Staff & PINs manages register identities, service staff or manager roles and four-digit PINs.",
+      "steps": [
+        "Open Manage, Team & setup, Staff & PINs. Choose Add Staff to create a new profile.",
+        "Enter the name, choose Service Staff or Manager (SIC) as appropriate and set the required four-digit PIN.",
+        "Use Edit to update a profile or reset a PIN. Leave the PIN blank when editing to keep the existing one.",
+        "Use Remove only when a person should no longer sign in and the app permits removal. The owner profile cannot be removed here."
+      ],
+      "keywords": [
+        "staff",
+        "team",
+        "partner",
+        "PIN",
+        "reset PIN",
+        "approval PIN",
+        "SIC",
+        "manager",
+        "service staff",
+        "remove staff",
+        "add person"
+      ],
+      "pages": [
+        "staff",
+        "settings",
+        "team"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "A PIN profile does not create a new email account, invite a business member or grant a separate online login. The page can refuse account-linked role changes.",
+        "A person with active shifts or referenced history may not be removable. Keep approval PINs private and do not share one person's identity across staff."
+      ]
+    },
+    {
+      "id": "registers-and-float",
+      "title": "Name registers and set their cash float",
+      "route": "/dashboard/tills",
+      "section": "People and business settings",
+      "summary": "Registers & cash float manages physical checkout names and the usual cash to leave for the next shift.",
+      "steps": [
+        "Open Manage, Team & setup, Registers & cash float.",
+        "Choose Add Register or Edit an existing register. Use a clear, unique name that staff recognize.",
+        "Set a cash float of zero or more and save. It becomes the suggested opening amount for a new shift and helps calculate cash to bank at close.",
+        "At each opening, the cashier still counts and enters the actual cash rather than assuming the suggested float is correct."
+      ],
+      "keywords": [
+        "registers",
+        "tills",
+        "cash float",
+        "standard float",
+        "rename",
+        "add register",
+        "checkout point",
+        "bank amount"
+      ],
+      "pages": [
+        "registers",
+        "till",
+        "close"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "A float is cash left in the drawer, not a sale or paid-in event. Do not remove a register with an open shift or needed history; check the app's refusal or confirmation carefully."
+      ]
+    },
+    {
+      "id": "business-profile-settings",
+      "title": "Find business settings and access rules",
+      "route": "/dashboard/settings",
+      "section": "People and business settings",
+      "summary": "Team & setup shows business details and connects you to staff, registers, performance and supplier settings.",
+      "steps": [
+        "Open Manage and Team & setup.",
+        "Use Staff & PINs for a person, Registers & cash float for a checkout point, or Individual staff performance for their shifts.",
+        "Find Business profile to review the name, currency and business type, and to change Kitchen display.",
+        "For scanning, open Menu items. For automatic ingredient tracking, open Recipes."
+      ],
+      "keywords": [
+        "business profile",
+        "settings",
+        "team and setup",
+        "business name",
+        "currency",
+        "permissions",
+        "reports access",
+        "backend settings"
+      ],
+      "pages": [
+        "settings",
+        "staff",
+        "registers",
+        "menu"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "Name, currency and business type are displayed here; the current Business profile screen edits the Kitchen display switch. It is not a full business-details editor.",
+        "Owners and managers can view the business workspace. Service staff use the till and kitchen rather than manager reports."
+      ]
+    },
+    {
+      "id": "ask-for-product-help",
+      "title": "Ask for help or a business explanation",
+      "route": "/dashboard",
+      "section": "Ask and connection guidance",
+      "summary": "Ask helps authorized owners and managers understand their business data and find the right product feature.",
+      "steps": [
+        "Open a manager page and choose Ask. Start a new chat for a new topic, or use Chat history to return to an earlier conversation.",
+        "For product help, ask a clear question such as How do I turn off the kitchen?, Where can I correct a cash count?, or What is the difference between leaving and closing a register?.",
+        "For business questions, give the period and what you want to know. On a report page, Ask can use the report being viewed and show useful report links or visual summaries.",
+        "Open the suggested page link and follow the steps there. Check the dates, units and report definitions before making a business decision."
+      ],
+      "keywords": [
+        "Ask",
+        "AI",
+        "copilot",
+        "manual",
+        "help",
+        "how do I",
+        "where is",
+        "feature",
+        "chat",
+        "guide",
+        "find page"
+      ],
+      "pages": [
+        "overview",
+        "settings",
+        "sales",
+        "cash"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "Ask requires a connection and the correct owner or manager account and PIN access. It is not available to an ordinary service staff session.",
+        "Ask can explain and link to a feature; required approval and settings changes still happen in their screens. Never put passwords, PINs or payment-card details into chat."
+      ]
+    },
+    {
+      "id": "ask-purchase-order-draft",
+      "title": "Prepare a purchase-order draft in Ask",
+      "route": "/dashboard",
+      "section": "Ask and connection guidance",
+      "summary": "Ask can prepare a supplier order draft for you to review in chat. It does not place an order with the supplier.",
+      "steps": [
+        "Open Ask as an authorized owner or manager. Tell it which supplier, products and quantities you want in the draft, or ask it to help review low stock.",
+        "Read the draft card in the chat. Check supplier details, units, quantities and notes against your actual stock.",
+        "Make the purchasing decision yourself and contact the supplier through your usual process. Keep your own sent-order and delivery records.",
+        "After a delivery, count the physical total in Stock & suppliers and record the new stock count."
+      ],
+      "keywords": [
+        "purchase order",
+        "PO",
+        "purchasing",
+        "draft",
+        "supplier order",
+        "reorder",
+        "order list",
+        "send order",
+        "receive stock"
+      ],
+      "pages": [
+        "overview",
+        "stock"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "The draft is saved with the chat for review. It does not save a purchase order in POS stock records, email a supplier, submit an order or receive stock automatically.",
+        "The current Stock & suppliers screen manages items, supplier details and counts. It does not expose a separate saved purchase-order workflow."
+      ]
+    },
+    {
+      "id": "slow-connection-and-retry",
+      "title": "Work carefully on a slow connection",
+      "route": "/till",
+      "section": "Ask and connection guidance",
+      "summary": "Kade needs internet access for sign-in, fresh business data and shared screens. A limited local order buffer helps with a brief interruption during order submission.",
+      "steps": [
+        "Open the app and sign in while connected. Keep the device and browser current, and use a reliable connection where possible.",
+        "After a save or payment action, wait for its confirmation or error. Avoid repeatedly tapping while an action is saving.",
+        "If the till says saved orders are waiting to send, keep the same browser and device available, reconnect and wait for the waiting count to clear. Do not immediately create a duplicate sale.",
+        "Use Try again or Check kitchen settings again when offered. If a saved order cannot be sent, read the message, verify the receipt or report and involve a manager before entering it again."
+      ],
+      "keywords": [
+        "slow internet",
+        "offline",
+        "connection",
+        "loading",
+        "reconnect",
+        "retry",
+        "pending order",
+        "saved orders",
+        "network",
+        "Sri Lanka",
+        "low bandwidth"
+      ],
+      "pages": [
+        "till",
+        "sales",
+        "settings"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "This is not a full offline POS. A first load, login, unknown product lookup, product options not yet loaded, reports, Kitchen and Ask may need a working connection.",
+        "Saved waiting orders belong to that browser's local storage. Do not clear site data, reset local app state, switch browser profiles or use another device to recover them.",
+        "A waiting order is not confirmed in cloud reports or Kitchen until sent. Resolve waiting orders before closing the register or leaving the device."
+      ]
+    }
+  ]
+}

@@ -4,6 +4,8 @@ A plain-language AI assistant for small cafe owners. Most POS software gives an 
 
 Cafe Copilot is a companion to Project POS (a lightweight POS + Kitchen Display System for small food businesses). It reads that system's data read-only and adds a conversational layer on top, embedded directly in the POS manager dashboard.
 
+The current product is [Kade POS](https://project-pos.pages.dev). Its Cloudflare-hosted app and this AWS Lambda now use the same consolidated Supabase project (`ljnzschozufepfpkzwjy`, historically called `pos-kds-staging`). The [POS production workflow](https://github.com/minutechreview/project-pos/blob/main/.github/workflows/deploy-production.yml) records this September 2026 consolidation. The exact-host guard in `agent/pos-client.mjs` still limits the agent to that project; its legacy `assertStagingUrl` name does not indicate a separate production database. Historical hackathon/demo documentation below describes the earlier staging setup.
+
 Built for the CockroachDB x AWS AI Hackathon.
 
 ## Problem
@@ -19,6 +21,7 @@ A non-technical cafe owner does not want to learn a reporting dashboard to answe
 - Remembers business notes the owner asks it to keep ("we switch to the winter menu in November") and lists them back on request.
 - Drafts a purchase order for the owner to review. Drafts are saved, never submitted.
 - States plainly when a date has no recorded activity instead of inventing a figure.
+- Explains product workflows from the same verified articles as the Kade PDF manual and attaches fixed links to the exact feature. See [product-help synchronization](docs/PRODUCT_HELP.md).
 
 ## Demo
 
@@ -48,7 +51,7 @@ The standalone app in `web/` is a local development client (`npm run dev:web`), 
 ```mermaid
 flowchart LR
     subgraph Clients
-        POS[POS staging dashboard\nCopilot widget - mode: authenticated]
+        POS[Kade POS dashboard\nCopilot widget - mode: authenticated]
         WEB[Local dev web client\nweb/ - mode: demo, local only]
     end
 
@@ -58,7 +61,7 @@ flowchart LR
     end
 
     CRDB[(CockroachDB\nconversations / notes / drafts /\nvector-indexed documents)]
-    PSB[(POS Supabase staging\nauth, business_memberships,\norders / tills / staff / waste)]
+    PSB[(Consolidated POS Supabase\nauth, business_memberships,\norders / tills / staff / waste)]
 
     POS -- "POST /chat (SSE)\nSupabase JWT + businessId" --> FN
     WEB -- "POST /chat (SSE)\nmode: demo" --> FN
@@ -233,7 +236,7 @@ Lambda environment variables are set by category — connections/identity, Bedro
 - Public demo mode (`mode: "demo"` against the deployed function) is currently disabled; the authenticated POS-embedded widget is the supported path.
 - The per-IP rate limiter is per warm Lambda instance, not a global/shared limit — see `docs/RUNBOOK.md` section 7 for the practical implication.
 - There is no versioned Lambda rollback: `deploy-lambda.mjs` deploys with `Publish: false`, so rollback means checking out and redeploying older code, not reverting to a published version.
-- The whole system runs against POS staging; production is deliberately untouched, and the POS Copilot widget is gated off by default at build time.
+- The production POS and historical staging app share the consolidated Supabase project. Demo seed/reset scripts are not a safe production exercise; use read-only checks or isolated fixtures to verify the product. Ask remains gated by `VITE_COPILOT_ENABLED` and is enabled in the current POS production workflow.
 - CockroachDB migrations are forward-only; undoing one requires writing a new forward migration that reverses the effect.
 
 ## Roadmap

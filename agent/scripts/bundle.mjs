@@ -32,6 +32,7 @@ async function zipBundle() {
 }
 
 async function main() {
+  await execFileAsync(process.execPath, [path.join(AGENT_DIR, 'scripts/sync-product-guide.mjs'), '--check']);
   await rm(OUT_DIR, { recursive: true, force: true });
   await mkdir(OUT_DIR, { recursive: true });
 

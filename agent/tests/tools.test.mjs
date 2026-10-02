@@ -74,6 +74,7 @@ describe('agent/tools.mjs', () => {
         'get_sales_report',
         'get_stock_status',
         'get_manager_page',
+        'get_product_help',
         'get_day_summary',
         'get_staff_performance',
         'get_waste_log',
@@ -86,11 +87,31 @@ describe('agent/tools.mjs', () => {
   });
 
   describe('executeTool', () => {
+    it('dispatches product-help without POS reads, embeddings, memory searches or writes', async () => {
+      const { executeTool } = await import('../tools.mjs');
+      const result = await executeTool('get_product_help', { query: 'How do I turn off KDS?' }, {
+        businessId: 'biz-1', principal: { businessId: 'biz-1', actorId: 'owner-1', accessMode: 'authenticated' },
+      });
+      expect(result).toMatchObject({ kind: 'product_help', found: true, read_only: true });
+      expect(result.pageLinks).toContainEqual(expect.objectContaining({ page: 'settings' }));
+      expect(embedTextMock).not.toHaveBeenCalled();
+      expect(searchDocumentsMock).not.toHaveBeenCalled();
+      expect(saveNoteMock).not.toHaveBeenCalled();
+      expect(saveDraftMock).not.toHaveBeenCalled();
+    });
+
     it('rejects an unknown tool name', async () => {
       const { executeTool } = await import('../tools.mjs');
       await expect(executeTool('delete_everything', {}, CTX)).rejects.toThrow(
         'Unknown tool: delete_everything'
       );
+    });
+
+    it('does not dispatch inherited object methods as tools', async () => {
+      const { executeTool } = await import('../tools.mjs');
+      for (const name of ['constructor', '__proto__', 'toString']) {
+        await expect(executeTool(name, {}, CTX)).rejects.toThrow(`Unknown tool: ${name}`);
+      }
     });
 
     describe('POS tools fail-closed behavior', () => {
