@@ -22,11 +22,11 @@ const articles = validateProductGuide(guide).articles.map((article) => {
 export const productHelpToolSpec = {
   toolSpec: {
     name: 'get_product_help',
-    description: 'Find verified Kade product-guide instructions for how to use the POS, where to find a feature, kitchen on/off, staff PINs, close the day, leave register versus sign out, receipts/refunds, scanning, customization, menu, recipes, stock, purchase orders and reports. Search this guide FIRST for how-to or navigation questions instead of reading business numbers or guessing. It reads bundled instructions only, performs no business-data query and makes no changes. Returned page links open approved app pages.',
+    description: 'Find verified Kade product-guide instructions for how to use the POS, where to find a feature, app language settings for English/Tamil/Sinhala and Arabic coming soon, customer receipt/menu languages, kitchen on/off, staff PINs, close the day, leave register versus sign out, receipts/refunds, scanning, customization, menu, recipes, stock, purchase orders and reports. Search this guide FIRST for how-to or navigation questions instead of reading business numbers or guessing. It reads bundled instructions only, performs no business-data query and makes no changes. Returned page links open approved app pages.',
     inputSchema: { json: {
       type: 'object', additionalProperties: false,
       properties: {
-        query: { type: 'string', minLength: 2, maxLength: MAX_QUERY_CHARS, description: 'The feature or how-to question in plain language; up to 400 characters.' },
+        query: { type: 'string', minLength: 2, maxLength: MAX_QUERY_CHARS, description: 'The feature or how-to question in plain English to match the guide source; translate a Tamil/Sinhala question for this search while answering in the chosen app language. Native language names also match. Up to 400 characters.' },
         limit: { type: 'integer', minimum: 1, maximum: MAX_RESULTS, description: 'Maximum matching articles; default 2.' },
       }, required: ['query'],
     } },

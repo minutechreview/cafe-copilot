@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { getProductHelp, productHelpToolSpec } from '../product-help.mjs';
-import { MANAGER_PAGES } from '../manager-pages.mjs';
+import { MANAGER_PAGES, normalisePageLinks } from '../manager-pages.mjs';
 import guide from '../knowledge/product-guide.json' with { type: 'json' };
 
 const ctx = (overrides = {}) => ({
@@ -10,6 +10,21 @@ const ctx = (overrides = {}) => ({
 });
 
 describe('verified product help', () => {
+  it.each(['How do I change the app language to Tamil?', 'Sinhala staff language settings', 'Arabic coming soon', 'தமிழ் மொழி மாற்றம்', 'සිංහල භාෂාව වෙනස්'])('finds app-language instructions for %s without business queries', (query) => {
+    const from = vi.fn(() => { throw new Error('Help must not query business data'); });
+    const result = getProductHelp({ query, limit: 1 }, ctx({ posClient: { from } }));
+    expect(result.articles[0].id).toBe('app-language-settings');
+    expect(result.pageLinks).toContainEqual({ page: 'language_settings', label: 'App language', to: '/dashboard/settings#language-settings' });
+    const instructions = JSON.stringify(result.articles);
+    expect(instructions).toContain('Coming soon');
+    expect(instructions).toContain('Customer receipt and menu languages are separate');
+    expect(instructions).toContain('Only an owner or manager');
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it('keeps the language feature link fixed when a model supplies forged URLs or tenant parameters', () => {
+    expect(normalisePageLinks([{ page: 'language_settings', to: '/dashboard/settings#other', href: 'https://evil.test', business_id: 'shop-b' }])).toEqual([{ page: 'language_settings', label: 'App language', to: '/dashboard/settings#language-settings' }]);
+  });
   it('retrieves KDS instructions and settings link without accessing shop data', () => {
     const from = vi.fn(() => { throw new Error('Help must not query business data'); });
     const result = getProductHelp({ query: 'How do I turn off KDS kitchen display?' }, ctx({ posClient: { from } }));

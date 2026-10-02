@@ -16,7 +16,16 @@ describe('product guide release contract', () => {
     expect(validateProductGuide(fixture())).toMatchObject({ version: '1.0' });
   });
 
-  it.each(['https://evil.test', '//evil.test', '/dashboard/settings?business_id=other', '/till?orders=1&business_id=other', '/manual/kade-user-manual.pdf'])('rejects non-approved routes: %s', (route) => {
+  it('accepts only the fixed language settings fragment for that page identifier', () => {
+    const guide = fixture();
+    guide.articles[0].pages = ['language_settings'];
+    guide.articles[0].route = '/dashboard/settings#language-settings';
+    expect(validateProductGuide(guide)).toBe(guide);
+    guide.articles[0].route = '/dashboard/settings#other';
+    expect(() => validateProductGuide(guide)).toThrow('Invalid guide route');
+  });
+
+  it.each(['https://evil.test', '//evil.test', '/dashboard/settings?business_id=other', '/dashboard/settings#unknown', '/dashboard/settings?business_id=other#language-settings', '/till?orders=1&business_id=other', '/manual/kade-user-manual.pdf'])('rejects non-approved routes: %s', (route) => {
     const guide = fixture();
     guide.articles[0].route = route;
     expect(() => validateProductGuide(guide)).toThrow('Invalid guide route');

@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "product": "Kade",
   "updatedAt": "2026-10-02",
   "baseUrl": "https://project-pos.pages.dev",
@@ -103,7 +103,7 @@
       ],
       "cautions": [
         "Setup is for a new business. It is not an editor for an existing shop. Current settings are found under Team & setup, Menu items and Recipes.",
-        "The staff interface is English. Customer receipts and the menu can use the configured English, Arabic, Sinhala and Tamil content."
+        "Staff screens can use English, Tamil or Sinhala. After setup, owners and managers choose App language in Team & setup, under Business profile. Arabic for staff screens is coming soon. Customer receipt and menu languages are configured separately."
       ]
     },
     {
@@ -1195,6 +1195,55 @@
       "cautions": [
         "Products without a recipe do not change ingredient stock automatically. With Kitchen display on, usage is recorded when an order completes; with it off, the paid order completes at checkout.",
         "Turning recipe tracking off keeps existing recipe links but stops automatic tracking. This is not ingredient costing or full accounting."
+      ]
+    },
+    {
+      "id": "app-language-settings",
+      "title": "Change the app language",
+      "route": "/dashboard/settings#language-settings",
+      "section": "People and business settings",
+      "summary": "An owner or manager can choose English, Tamil or Sinhala for the staff screens across this shop. Arabic is shown as Coming soon and cannot be selected yet.",
+      "steps": [
+        "Open Manage, choose Team & setup, then find App language in Business profile. The App language link from Ask opens this setting directly.",
+        "Choose English, Tamil or Sinhala and select Save language. The screen changes after the setting is saved and its translations have loaded.",
+        "This shop setting applies to the till, order controls, Kitchen display, manager pages and Ask controls. Other signed-in devices refresh the setting automatically; reopening the app also reads it.",
+        "Ask uses the selected app language for its answers unless you request another language. Ask can explain the setting and link to it; you choose and save the language yourself.",
+        "To return to English, choose English in the same setting and save. English stays visible alongside each language name to help you find it."
+      ],
+      "keywords": [
+        "app language",
+        "change language",
+        "language settings",
+        "staff language",
+        "interface language",
+        "Tamil",
+        "Sinhala",
+        "English",
+        "Arabic coming soon",
+        "translate POS",
+        "தமிழ்",
+        "மொழி மாற்றம்",
+        "பயன்பாட்டு மொழி",
+        "சிங்களம்",
+        "සිංහල",
+        "භාෂාව වෙනස්",
+        "යෙදුමේ භාෂාව",
+        "දෙමළ"
+      ],
+      "pages": [
+        "language_settings",
+        "settings"
+      ],
+      "roles": [
+        "owner",
+        "manager",
+        "staff"
+      ],
+      "cautions": [
+        "Only an owner or manager can save the shop language. It does not change prices, order records, staff PINs, currency or the shop name.",
+        "Customer receipt and menu languages are separate. Product names use the saved translated name where available and otherwise keep their original name. Enter translated names under Menu items.",
+        "Arabic for staff screens is coming soon. Existing customer Arabic names and receipt/menu support remain separate from this setting.",
+        "An internet connection is needed to save the setting and load a language for the first time. If translations do not load, choose Try again. Saved orders and your order check are kept."
       ]
     },
     {

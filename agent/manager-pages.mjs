@@ -23,6 +23,7 @@ export const MANAGER_PAGES = {
   staff: { label: 'Staff & PINs', to: '/dashboard/staff' },
   registers: { label: 'Registers & float', to: '/dashboard/tills' },
   settings: { label: 'Team & setup', to: '/dashboard/settings' },
+  language_settings: { label: 'App language', to: '/dashboard/settings#language-settings' },
 };
 
 export function validReportDate(value) {
