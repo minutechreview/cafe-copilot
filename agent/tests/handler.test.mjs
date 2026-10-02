@@ -12,8 +12,8 @@ const FAKE_TOOL_CONFIG = { tools: [{ toolSpec: { name: 'fake_tool' } }] };
 
 vi.mock('@aws-sdk/client-bedrock-runtime', () => {
   return {
-    BedrockRuntimeClient: vi.fn().mockImplementation(() => ({ send: sendMock })),
-    ConverseStreamCommand: vi.fn().mockImplementation((input) => ({ input })),
+    BedrockRuntimeClient: vi.fn().mockImplementation(function () { return { send: sendMock }; }),
+    ConverseStreamCommand: vi.fn().mockImplementation(function (input) { return { input }; }),
   };
 });
 

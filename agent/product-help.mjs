@@ -22,7 +22,7 @@ const articles = validateProductGuide(guide).articles.map((article) => {
 export const productHelpToolSpec = {
   toolSpec: {
     name: 'get_product_help',
-    description: 'Find verified Kade product-guide instructions for how to use the POS, where to find a feature, app language settings for English/Tamil/Sinhala and Arabic coming soon, customer receipt/menu languages, kitchen on/off, staff PINs, close the day, leave register versus sign out, receipts/refunds, scanning, customization, menu, recipes, stock, purchase orders and reports. Search this guide FIRST for how-to or navigation questions instead of reading business numbers or guessing. It reads bundled instructions only, performs no business-data query and makes no changes. Returned page links open approved app pages.',
+    description: 'Find verified Kade product-guide instructions for using the POS and finding features: connect/disconnect/reconnect a shared register, owner approval, recover original saved sales or lost confirmations, app languages English/Tamil/Sinhala and Arabic coming soon, customer receipt/menu languages, kitchen on/off, staff PINs, close the day, leave register versus sign out, receipts and remaining partial refunds, scanning, customization, menu, recipes, stock, purchase orders and reports. Search this guide FIRST for how-to or navigation questions instead of reading business numbers or guessing. It reads bundled instructions only, performs no business-data query and makes no changes. Returned page links open approved app pages.',
     inputSchema: { json: {
       type: 'object', additionalProperties: false,
       properties: {
