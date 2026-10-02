@@ -10,6 +10,15 @@ const ctx = (overrides = {}) => ({
 });
 
 describe('verified product help', () => {
+  it('explains prepared open-till protection and links its exact setting without business queries', () => {
+    const from = vi.fn(() => { throw new Error('Help must not query business data'); });
+    const result = getProductHelp({ query: 'How do I enable offline protection for an internet outage?', limit: 2 }, ctx({ posClient: { from } }));
+    expect(result.pageLinks).toContainEqual({ page: 'offline_settings', label: 'Offline protection', to: '/dashboard/settings#offline-settings' });
+    expect(JSON.stringify(result.articles)).toMatch(/Ready/);
+    expect(JSON.stringify(result.articles)).toMatch(/opening|sign-in|signing in/);
+    expect(from).not.toHaveBeenCalled();
+    expect(normalisePageLinks([{ page: 'offline_settings', to: 'https://evil.test', business_id: 'shop-b' }])).toEqual([{ page: 'offline_settings', label: 'Offline protection', to: '/dashboard/settings#offline-settings' }]);
+  });
   it.each(['How do I change the app language to Tamil?', 'Sinhala staff language settings', 'Arabic coming soon', 'தமிழ் மொழி மாற்றம்', 'සිංහල භාෂාව වෙනස්'])('finds app-language instructions for %s without business queries', (query) => {
     const from = vi.fn(() => { throw new Error('Help must not query business data'); });
     const result = getProductHelp({ query, limit: 1 }, ctx({ posClient: { from } }));

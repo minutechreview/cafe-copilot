@@ -1,5 +1,5 @@
 {
-  "version": "1.1.0",
+  "version": "1.2.0",
   "product": "Kade",
   "updatedAt": "2026-10-02",
   "baseUrl": "https://project-pos.pages.dev",
@@ -1434,16 +1434,59 @@
       ]
     },
     {
+      "id": "offline-protection-settings",
+      "title": "Enable Offline protection",
+      "route": "/dashboard/settings#offline-settings",
+      "section": "Ask and connection guidance",
+      "summary": "An owner or manager can enable till continuity for short internet interruptions. The setting prepares each online, open register; Ready means that device has saved the complete products and custom choices.",
+      "steps": [
+        "Connect to the internet and open Team & setup, then Business profile.",
+        "Turn Offline protection On and wait for the saved confirmation. The setting is shared by the shop, but preparation happens separately on each open register.",
+        "Return to the till and wait for Ready. If preparation fails, keep using the connected till and choose Prepare again. The device is not protected until Ready appears.",
+        "To turn it off, return to the same setting while connected. Previously saved sales remain on the device and continue to sync."
+      ],
+      "keywords": [
+        "offline protection",
+        "enable offline",
+        "offline toggle",
+        "internet outage",
+        "power cut",
+        "router",
+        "connection interruption",
+        "prepare register",
+        "ready till",
+        "Tamil offline",
+        "Sinhala offline",
+        "இணையம் இல்லாமல்",
+        "අන්තර්ජාලය නොමැතිව"
+      ],
+      "pages": [
+        "offline_settings",
+        "till"
+      ],
+      "roles": [
+        "owner",
+        "manager"
+      ],
+      "cautions": [
+        "Only an owner or manager can change this shop setting. Keep each prepared till open during an outage; app reopening and new sign-in still need internet.",
+        "Protection covers the till and its locally saved receipts. Kitchen tickets, reports and Ask catch up after reconnection.",
+        "Each sale retains its original account, shop, register session, price and time. A matching confirmed upload is required before it leaves the waiting list."
+      ]
+    },
+    {
       "id": "slow-connection-and-retry",
-      "title": "Work carefully on a slow connection",
+      "title": "Keep serving during a connection interruption",
       "route": "/till",
       "section": "Ask and connection guidance",
-      "summary": "Kade needs internet access for sign-in, fresh business data and shared screens. A limited local order buffer helps with a brief interruption during order submission.",
+      "summary": "Enable Offline protection while online, then prepare each open register. A Ready till keeps recording known products, their options and receipts on that device; sales send automatically when internet returns.",
       "steps": [
-        "Open the app and sign in while connected. Keep the device and browser current, and use a reliable connection where possible.",
-        "After a save or payment action, wait for its confirmation or error. Avoid repeatedly tapping while an action is saving.",
-        "If the till says saved orders are waiting to send, keep the same browser and device available, reconnect and wait for the waiting count to clear. Do not immediately create a duplicate sale.",
-        "Use Try again or Check kitchen settings again when offered. If a saved order cannot be sent, read the message, verify the receipt or report and involve a manager before entering it again."
+        "While connected, an owner or manager opens Team & setup, Business profile and turns on Offline protection.",
+        "Open the register and wait for Offline protection: Ready on that device. Preparation saves a complete set of products and custom choices. Repeat this on each device you use.",
+        "Keep that till open if the internet drops. Ring known items, choose their prepared options and take payment as usual. Each sale is saved on this device before the check clears, with a local receipt reference.",
+        "If a connected till says a sale has not been confirmed, choose Retry saved sale before starting another check. It reuses the same sale reference; do not take payment again or re-enter the items.",
+        "Use Saved sales to view waiting receipts. When the connection returns, the same sales send automatically with their original sale time. Kitchen tickets and reports update after confirmation.",
+        "Wait for the saved-sales count to clear before closing the register. If a sale needs review, keep the device and ask a manager to check it; do not ring it again."
       ],
       "keywords": [
         "slow internet",
@@ -1469,9 +1512,11 @@
         "staff"
       ],
       "cautions": [
-        "This is not a full offline POS. A first load, login, unknown product lookup, product options not yet loaded, reports, Kitchen and Ask may need a working connection.",
-        "Saved waiting orders belong to that browser's local storage. Do not clear site data, reset local app state, switch browser profiles or use another device to recover them.",
-        "A waiting order is not confirmed in cloud reports or Kitchen until sent. Resolve waiting orders before closing the register or leaving the device."
+        "First opening the app, signing in and opening a register need internet. Keep the prepared till open during the interruption; offline refresh or reopening is not supported.",
+        "New or unknown barcode products, parking checks, refunds, void approvals, staff PIN changes, drawer actions and register closing need internet. Kitchen, reports and Ask also need internet.",
+        "Saved sales belong to this account, shop, register session and browser on this device. Do not clear browser site data, reset local app state, switch browser profiles or discard the device before they sync.",
+        "If a register was closed on another device, an unsent sale stays saved for review. It does not silently alter the closed shift. Turning protection off also keeps previously saved sales.",
+        "A power cut requires a device with battery power or another power supply. Kade records the payment method; whether a card terminal can take payments without internet depends on that terminal."
       ]
     }
   ]

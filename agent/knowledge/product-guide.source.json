@@ -1,7 +1,7 @@
 {
   "sourceRepository": "https://github.com/minutechreview/project-pos",
   "sourcePath": "docs/product-guide.json",
-  "guideVersion": "1.1.0",
-  "sha256": "01e03e08df6b92af920b907581ad6a7b5247b2bcada0fe35c07753917f30909e",
-  "articleCount": 40
+  "guideVersion": "1.2.0",
+  "sha256": "c422e5154b73eb7669b90bbaaa200c916ab2512994e61bcfdf42a8abeea4f8f1",
+  "articleCount": 41
 }
