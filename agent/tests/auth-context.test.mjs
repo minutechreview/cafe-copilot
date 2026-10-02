@@ -13,10 +13,19 @@ function createMockSupabaseClient({
   memberships = [],
   membershipError = null,
   throwOnQuery = false,
+  operator = undefined,
+  operatorError = null,
 } = {}) {
   const queryState = { userId: null, businessId: null, roles: null, status: null };
 
   const client = {
+    rpc: vi.fn().mockImplementation(() => Promise.resolve({
+      data: operator === undefined ? {
+        id: 'verified-staff', business_id: queryState.businessId,
+        role: memberships[0]?.role, effective_role: memberships[0]?.role,
+      } : operator,
+      error: operatorError,
+    })),
     auth: {
       getUser: vi.fn().mockImplementation(() => {
         if (userError) {
@@ -136,10 +145,11 @@ describe('resolveAuthContext - authenticated mode', () => {
       accessToken: secretToken,
     });
     expect(supabaseClient.auth.getUser).toHaveBeenCalledWith(secretToken);
+    expect(supabaseClient.rpc).toHaveBeenCalledWith('get_current_operator', { p_business_id: validBusinessId });
     expect(supabaseClient.__queryState).toEqual({
       userId: 'user-uuid-123',
       businessId: 'biz-uuid-456',
-      roles: ['owner', 'manager'],
+      roles: ['owner', 'manager', 'staff'],
       status: 'active',
     });
   });
@@ -162,6 +172,47 @@ describe('resolveAuthContext - authenticated mode', () => {
     expect(principal.userId).toBe('user-uuid-123');
     expect(principal.businessId).toBe('biz-uuid-456');
     expect(principal.accessToken).toBe(secretToken);
+  });
+
+  it.each(['owner', 'manager'])('allows a trusted register with a verified %s operator', async (role) => {
+    const supabaseClient = createMockSupabaseClient({
+      user: validUser,
+      memberships: [{ role: 'staff', status: 'active' }],
+      operator: { id: 'verified-operator', business_id: validBusinessId, role, effective_role: role },
+    });
+    const principal = await resolveAuthContext({
+      headers: { authorization: `Bearer ${secretToken}` }, mode: 'authenticated', businessId: validBusinessId,
+    }, { supabaseClient });
+    expect(principal).toMatchObject({ mode: 'authenticated', userId: validUser.id, businessId: validBusinessId });
+  });
+
+  it.each([
+    ['no verified PIN', null],
+    ['cashier on owner account', { id: 'cashier', business_id: validBusinessId, role: 'cashier', effective_role: 'staff' }],
+    ['owner PIN on staff account', { id: 'owner', business_id: validBusinessId, role: 'owner', effective_role: 'staff' }],
+    ['another business', { id: 'owner', business_id: 'another-business', role: 'owner', effective_role: 'owner' }],
+    ['missing effective role', { id: 'owner', business_id: validBusinessId, role: 'owner' }],
+  ])('denies %s even with an active owner membership', async (_label, operator) => {
+    const supabaseClient = createMockSupabaseClient({
+      user: validUser, memberships: [{ role: 'owner', status: 'active' }], operator,
+    });
+    await expect(resolveAuthContext({
+      headers: { authorization: `Bearer ${secretToken}` }, mode: 'authenticated', businessId: validBusinessId,
+    }, { supabaseClient })).rejects.toMatchObject({
+      status: 403, message: 'Enter your owner or manager PIN in the POS before using Ask.',
+    });
+  });
+
+  it('fails closed with a safe error when operator lookup fails', async () => {
+    const supabaseClient = createMockSupabaseClient({
+      user: validUser, memberships: [{ role: 'owner', status: 'active' }],
+      operatorError: { message: secretToken },
+    });
+    await expect(resolveAuthContext({
+      headers: { authorization: `Bearer ${secretToken}` }, mode: 'authenticated', businessId: validBusinessId,
+    }, { supabaseClient })).rejects.toMatchObject({
+      status: 500, message: 'We could not check your staff sign-in. Please try again.',
+    });
   });
 
   it('denies cross-tenant requests when user belongs to biz-1 but requests biz-2', async () => {
@@ -279,7 +330,7 @@ describe('resolveAuthContext - authenticated mode', () => {
     });
   });
 
-  it('throws 403 Forbidden if membership role is staff', async () => {
+  it('denies a staff membership without a verified owner or manager operator', async () => {
     const supabaseClient = createMockSupabaseClient({
       user: validUser,
       memberships: [{ role: 'staff', status: 'active' }],
@@ -296,7 +347,7 @@ describe('resolveAuthContext - authenticated mode', () => {
       )
     ).rejects.toMatchObject({
       status: 403,
-      message: expect.stringMatching(/Access denied/i),
+      message: 'Enter your owner or manager PIN in the POS before using Ask.',
     });
   });
 

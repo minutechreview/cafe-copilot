@@ -206,7 +206,7 @@ export async function resolveAuthContext(input = {}, options = {}) {
         .select('role, status')
         .eq('user_id', userId)
         .eq('business_id', businessId.trim())
-        .in('role', ['owner', 'manager'])
+        .in('role', ['owner', 'manager', 'staff'])
         .eq('status', 'active');
 
       if (signal && typeof membershipQuery.abortSignal === 'function') {
@@ -225,17 +225,39 @@ export async function resolveAuthContext(input = {}, options = {}) {
     }
 
     if (!memberships || memberships.length === 0) {
-      throw new AuthContextError('Access denied: active owner or manager membership required.', 403);
+      throw new AuthContextError('Access denied: active business membership required.', 403);
     }
 
-    const activeOwnerOrManager = memberships.some((m) => {
-      const isOwnerOrManager = m.role === 'owner' || m.role === 'manager';
-      const isActive = m.status === 'active';
-      return isOwnerOrManager && isActive;
-    });
+    const activeMembership = memberships.some((m) =>
+      ['owner', 'manager', 'staff'].includes(m.role) && m.status === 'active'
+    );
 
-    if (!activeOwnerOrManager) {
-      throw new AuthContextError('Access denied: active owner or manager membership required.', 403);
+    if (!activeMembership) {
+      throw new AuthContextError('Access denied: active business membership required.', 403);
+    }
+
+    let operator;
+    try {
+      throwIfAborted(signal);
+      let operatorQuery = supabase.rpc('get_current_operator', { p_business_id: businessId.trim() });
+      if (signal && typeof operatorQuery.abortSignal === 'function') {
+        operatorQuery = operatorQuery.abortSignal(signal);
+      }
+      const operatorResult = await operatorQuery;
+      throwIfAborted(signal);
+      if (operatorResult?.error) throw operatorResult.error;
+      operator = operatorResult?.data;
+    } catch {
+      if (signal?.aborted) throw new AuthContextError('The Copilot request took too long. Please try again.', 504);
+      throw new AuthContextError('We could not check your staff sign-in. Please try again.', 500);
+    }
+
+    // Dedicated registers have a staff membership even when the owner uses them. Only
+    // the database's verified operator can authorize manager conversations and reports.
+    if (!operator?.id || operator.business_id !== businessId.trim()
+      || !['owner', 'manager'].includes(operator.role)
+      || !['owner', 'manager'].includes(operator.effective_role)) {
+      throw new AuthContextError('Enter your owner or manager PIN in the POS before using Ask.', 403);
     }
 
     return {

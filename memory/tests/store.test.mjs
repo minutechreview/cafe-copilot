@@ -6,11 +6,9 @@ const releaseMock = vi.fn();
 const connectMock = vi.fn();
 const endMock = vi.fn();
 
-const PoolMock = vi.fn().mockImplementation(() => ({
-  query: queryMock,
-  connect: connectMock,
-  end: endMock,
-}));
+const PoolMock = vi.fn().mockImplementation(function () {
+  return { query: queryMock, connect: connectMock, end: endMock };
+});
 
 vi.mock('pg', () => ({
   default: { Pool: PoolMock },

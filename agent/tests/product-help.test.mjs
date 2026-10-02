@@ -10,6 +10,28 @@ const ctx = (overrides = {}) => ({
 });
 
 describe('verified product help', () => {
+  it.each([
+    ['How do I connect a shared tablet register?', 'connect-shared-register', 'owner password'],
+    ['How do I reconnect this register after access was revoked?', 'disconnect-and-reconnect-register', 'original account'],
+    ['Review saved sales with a lost confirmation after a closed shift', 'recover-earlier-saved-sales', 'already-recorded sale'],
+  ])('finds safe register instructions for %s', (query, id, caution) => {
+    const from = vi.fn(() => { throw new Error('Help must not query business data'); });
+    const result = getProductHelp({ query, limit: 1 }, ctx({ posClient: { from } }));
+    expect(result.articles[0].id).toBe(id);
+    expect(JSON.stringify(result.articles).toLowerCase()).toContain(caution);
+    expect(result.pageLinks).toContainEqual(expect.objectContaining({ page: 'settings', to: '/dashboard/settings' }));
+    expect(result.read_only).toBe(true);
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it('explains the remaining partial refund and prohibits a later void', () => {
+    const result = getProductHelp({ query: 'partial refund remaining amount can I void?', limit: 1 }, ctx());
+    expect(result.articles[0].id).toBe('refund-or-void');
+    expect(JSON.stringify(result.articles)).toContain('Earlier refunds are already deducted');
+    expect(JSON.stringify(result.articles)).toContain('A sale with any refund cannot also be voided');
+    expect(JSON.stringify(result.articles)).toContain('does not send money');
+  });
+
   it('explains prepared open-till protection and links its exact setting without business queries', () => {
     const from = vi.fn(() => { throw new Error('Help must not query business data'); });
     const result = getProductHelp({ query: 'How do I enable offline protection for an internet outage?', limit: 2 }, ctx({ posClient: { from } }));

@@ -1,5 +1,5 @@
 {
-  "version": "1.2.0",
+  "version": "1.3.0",
   "product": "Kade",
   "updatedAt": "2026-10-02",
   "baseUrl": "https://project-pos.pages.dev",
@@ -10,11 +10,11 @@
       "title": "Sign in to your shop",
       "route": "/login",
       "section": "Your first day",
-      "summary": "The shop account opens Kade on a device. A separate staff PIN identifies the person using the register.",
+      "summary": "The owner uses a personal account to set up the shop and connect shared devices. Each person then uses their own staff PIN on the connected register.",
       "steps": [
-        "Open Kade and choose Sign In. Enter the shop account email and password.",
-        "For a new business, choose Create Account and follow the email confirmation instructions if shown.",
-        "Complete first-time business setup, then choose a register and sign in with your staff PIN."
+        "For a new shop, open Kade, choose Register and create the owner account. Follow the email confirmation instructions when shown.",
+        "Choose Sign In and enter your personal account email and password. Complete first-time business setup when needed.",
+        "On a shared counter, have the owner choose Connect this register. After connection, staff choose their own name and enter their PIN."
       ],
       "keywords": [
         "login",
@@ -35,7 +35,8 @@
         "staff"
       ],
       "cautions": [
-        "A staff PIN does not create a separate online account. Keep the shop password private and use each person's own PIN at the till."
+        "Keep the owner password private. Connecting a register replaces the owner session on that device with separate register access.",
+        "A personal owner or manager account accepts only its own linked staff PIN. A connected register accepts staff PINs from the same shop."
       ]
     },
     {
@@ -43,11 +44,11 @@
       "title": "Recover a forgotten password",
       "route": "/reset-password",
       "section": "Your first day",
-      "summary": "Reset the shop account password through the sign-in page. A forgotten staff PIN is changed by an owner or manager under Staff & PINs.",
+      "summary": "Recover your personal account password through the sign-in page. Password recovery does not change a staff PIN.",
       "steps": [
-        "On the sign-in page, choose Forgot password and enter the account email.",
-        "Open the recovery link from that email. Choose a new password, type it again and save.",
-        "Return to the till and use your staff PIN as usual."
+        "On the sign-in page, choose Forgot your password? and enter your personal account email.",
+        "Open the recovery link from that email. Choose a new password, type it again and save. If the link has expired, request another one.",
+        "Sign in with the new password and your own staff PIN. On a shared device, ask the owner to reconnect the original register when needed."
       ],
       "keywords": [
         "forgot password",
@@ -66,7 +67,8 @@
         "staff"
       ],
       "cautions": [
-        "Opening the recovery email does not finish the password change. Save the new password first."
+        "Opening the recovery email does not finish the password change. Save the new password first.",
+        "A forgotten service staff PIN is changed by an authorized owner or manager in Staff & PINs. If the owner PIN is lost, contact your Kade support provider. A password reset does not reset it."
       ]
     },
     {
@@ -79,7 +81,7 @@
         "Enter the business name and type. Choose the service style and order types you use, such as takeaway or dine-in.",
         "Choose device preferences, register count and whether to use the Kitchen display. Quick kitchen flow uses Paid and Ready; full flow adds Being made. Enable packet scanning if needed.",
         "Choose the customer languages and currency. Add contact details, an optional logo and a four-digit owner PIN.",
-        "Finish setup, continue to the till and check Menu items before selling. Starter items, when supplied, need your prices and availability."
+        "Finish setup and check Menu items before selling. Starter items, when supplied, need your prices and availability. On each shared device, choose Connect this register before handing it to the team."
       ],
       "keywords": [
         "setup",
@@ -116,7 +118,7 @@
         "Use Till to make a sale. Orders opens the current register shift's receipts. Kitchen appears only when the Kitchen display is enabled.",
         "Owners and managers choose Manage for Overview, Close the day, Reports, Products & stock, and Team & setup.",
         "On a phone, open the business workspace's Menu control to reveal its sections. On the till, use Products and Order check to switch between the product grid and the check.",
-        "Use the top Leave register icon to return to staff PIN selection. Use the Sign out of this shop icon to end the device account session."
+        "Use the top Leave register icon to return to staff PIN selection. Sign out of this shop ends the device account session; an owner may need to reconnect the original register before staff return."
       ],
       "keywords": [
         "navigation",
@@ -242,13 +244,126 @@
       ]
     },
     {
+      "id": "connect-shared-register",
+      "title": "Connect a shared counter or kitchen device",
+      "route": "/dashboard/settings",
+      "section": "Open and protect a register",
+      "summary": "Give a shared device its own register access so the owner’s personal account is not left signed in for staff.",
+      "steps": [
+        "While online, sign in with the owner’s personal email and password, then enter that owner’s own PIN.",
+        "Choose Connect this register on the till, or open Team & setup and find Connected registers.",
+        "Give the device a clear name. Enter Your owner PIN and Your owner password, then choose Connect this register.",
+        "Wait for confirmation. Kade switches this browser to the separate register account and signs out the original owner session on this device.",
+        "Each cashier chooses the physical register, then selects their own name and PIN and starts or resumes their shift."
+      ],
+      "keywords": [
+        "connect this register",
+        "shared tablet",
+        "counter device",
+        "register account",
+        "owner password",
+        "dedicated register",
+        "kitchen device",
+        "device setup"
+      ],
+      "pages": [
+        "settings",
+        "till",
+        "registers",
+        "staff"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "cautions": [
+        "Connection requires internet and an owner account with an email and password. A manager PIN or register account cannot connect another device.",
+        "Do not share the owner password with staff. The register’s generated password is not shown or handed to the team.",
+        "If the response is interrupted, retry the same connection. Keep the saved request and any waiting sales; do not clear browser data or create a replacement account."
+      ]
+    },
+    {
+      "id": "disconnect-and-reconnect-register",
+      "title": "Disconnect or recover a connected register",
+      "route": "/dashboard/settings",
+      "section": "Open and protect a register",
+      "summary": "An owner can stop a device’s access and later reconnect the same register account without changing its saved sales.",
+      "steps": [
+        "Personally sign in as the owner, enter your own PIN and open Team & setup, Business profile, Connected registers.",
+        "Choose Disconnect for the device. Confirm with your owner PIN and password. Access stops; any sales waiting on that device stay stored there.",
+        "If Finish disconnecting appears, use it to retry the remaining sign-out cleanup. The device remains disconnected during this retry.",
+        "On the original device, use owner recovery when prompted and sign in with the owner’s personal account. Choose Reconnect this register and confirm the owner PIN and password.",
+        "Wait for the same register account to return. Enter the original cashier PIN, return to the original shift where available and let its waiting sales sync."
+      ],
+      "keywords": [
+        "disconnect register",
+        "finish disconnecting",
+        "reconnect this register",
+        "device revoked",
+        "signed out register",
+        "owner recovery",
+        "saved sales",
+        "same account",
+        "register session lost"
+      ],
+      "pages": [
+        "settings",
+        "login",
+        "till"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "cautions": [
+        "Reconnect restores the original account with a newly approved session. It does not reactivate old sign-in tokens or move a sale to another cashier or account.",
+        "If the account is still actively connected elsewhere, disconnect it first. The owner must approve reconnection.",
+        "Keep the original device and receipts. Do not erase its browser data, create a replacement register or enter an already-paid order again to clear a waiting sale."
+      ]
+    },
+    {
+      "id": "recover-earlier-saved-sales",
+      "title": "Review saved sales from an earlier shared account",
+      "route": "/dashboard/settings",
+      "section": "Open and protect a register",
+      "summary": "Older shared counters may have waiting sales under the owner account. Review their original records before connecting a new register account.",
+      "steps": [
+        "On the original device, personally sign in as the owner. Choose Review saved sales when it appears beside Connect this register.",
+        "Select the saved sale and check its cashier, shift and time. Enter Your owner PIN and Original cashier PIN.",
+        "Choose Send saved sale when recovery is available, or Check saved sale to check for an existing record. Kade sends the unchanged original record and clears it locally only after the database confirms that exact sale and shop.",
+        "An already-recorded sale can be confirmed again, including after its shift closed. This does not create a second sale or take payment again.",
+        "If the sale needs owner review, keep its receipt and the original device. Complete that review before connecting a replacement or clearing local storage."
+      ],
+      "keywords": [
+        "review saved sales",
+        "legacy saved sale",
+        "old owner account",
+        "lost confirmation",
+        "closed shift saved sale",
+        "original cashier PIN",
+        "unsynced old sale",
+        "migration cutover"
+      ],
+      "pages": [
+        "settings",
+        "till",
+        "orders"
+      ],
+      "roles": [
+        "owner"
+      ],
+      "cautions": [
+        "Fresh automatic recovery is limited to an open original shift and a recorded sale time before the register-account update. Unrecorded closed-shift or later old-account sales remain for owner review.",
+        "Keep the original account, cashier, price, time and receipt. Never take payment or enter the same order again just to remove a waiting entry.",
+        "PINs and passwords belong in the approval form, never in Ask chat."
+      ]
+    },
+    {
       "id": "start-register-shift",
       "title": "Start a register shift",
       "route": "/till",
       "section": "Open and protect a register",
       "summary": "Choose the physical register, identify the cashier and record the cash already in its drawer.",
       "steps": [
-        "Open Till and choose the register assigned to this device.",
+        "On a connected device, open Till and choose the physical register assigned to that counter. If Connect this register is shown, have the owner complete that first.",
         "Select your staff profile and enter your four-digit PIN. The app checks the PIN after the fourth digit.",
         "Count the physical opening cash. Check the suggested cash float and enter the actual amount, including zero when appropriate.",
         "Choose Start Shift. If another person has an open shift on that register, have it closed before starting a new one."
@@ -281,11 +396,11 @@
       "title": "Leave, sign out or close: which one?",
       "route": "/till",
       "section": "Open and protect a register",
-      "summary": "Leave register changes who is using the device. Sign out of this shop ends the account session. Close register counts cash and finishes the shift.",
+      "summary": "Leave register returns to staff PIN selection. Sign out ends the device account session. Close register counts cash and finishes the shift.",
       "steps": [
         "For a break, use Leave register. The device returns to staff PIN selection; the open shift stays open.",
-        "To end the shop account session on this device, use Sign out of this shop. Another account sign-in is needed to return.",
-        "At a shift change or at closing, use Close register, count the cash and get owner or manager PIN approval. Wait for the saved close summary."
+        "To end the account session on this device, use Sign out of this shop. Returning to a shared register requires owner reconnection and then the cashier PIN.",
+        "At a shift change or closing, use Close register, count the cash and get owner or manager PIN approval. Wait for the saved close summary."
       ],
       "keywords": [
         "leave register",
@@ -307,7 +422,8 @@
         "staff"
       ],
       "cautions": [
-        "Leaving or signing out does not close a shift or save a drawer count. Finish or park your current check before leaving."
+        "Leaving or signing out does not close a shift or save a drawer count. Finish or park your current check before leaving.",
+        "Let saved sales finish sending before signing out. If a disconnected register has waiting sales, recover the same register account; do not create a replacement or clear browser data."
       ]
     },
     {
@@ -535,12 +651,12 @@
       "title": "Refund or void a sale",
       "route": "/till?orders=1",
       "section": "Receipts and sale corrections",
-      "summary": "A refund records returned money. A void cancels a sale. Both need an owner or manager approval PIN and a reason.",
+      "summary": "A refund records returned money. A void cancels a paid sale. Both require an owner or manager approval PIN and a reason.",
       "steps": [
-        "Open Orders, find the sale and choose Refund or Void.",
+        "Open Orders, find the sale and choose the available Refund or Void action.",
         "Have an owner or manager enter their four-digit approval PIN.",
-        "For a refund, enter the amount, up to the sale total. Enter a clear reason and submit the correction.",
-        "Wait for confirmation and check the sale's Refunded or Voided label. Return money through the original payment method separately."
+        "For a refund, enter an amount no larger than the amount still left on the sale. Earlier refunds are already deducted. Give a clear reason and submit.",
+        "Wait for confirmation. Check Partly refunded, Refunded or Voided and the refunded amount. Return money through the original payment method separately."
       ],
       "keywords": [
         "refund",
@@ -564,8 +680,9 @@
       ],
       "cautions": [
         "The app records the correction; it does not send money to a card or bank account.",
-        "Refund and Void controls disappear after the sale has an adjustment. Do not assume multiple separate refunds are supported on the same sale.",
-        "Do not use the kitchen Cancel order control as a substitute for recording returned money."
+        "Separate partial refunds are supported while money remains. A cancelled or fully refunded sale cannot be refunded again. A sale with any refund cannot also be voided.",
+        "Paid kitchen orders can be refunded while food is being made. Kitchen cancellation uses approved sale cancellation; it does not return money automatically.",
+        "If another person adjusts the sale first, refresh its receipt before trying again."
       ]
     },
     {
@@ -718,7 +835,8 @@
       ],
       "cautions": [
         "No Sale logs a drawer opening. It is not a hardware promise that a connected drawer will open automatically.",
-        "Paid-In and Paid-Out affect expected drawer cash; they are not product sales."
+        "Paid-In and Paid-Out affect expected drawer cash; they are not product sales.",
+        "Use the number of decimal places your shop currency supports. Wait for the saved confirmation. If it is missing or an error appears, ask the owner or manager to check the Daily report before entering the cash movement again: it may already have been saved."
       ]
     },
     {
@@ -906,8 +1024,9 @@
         "manager"
       ],
       "cautions": [
-        "Expected cash starts with opening float, adds cash sales and paid-in money, then subtracts cash refunds and paid-out money. Card payments are not drawer cash.",
-        "Fix count corrects a saved count; it does not reopen a shift or erase the earlier record. Older records may show a dash where information was not captured."
+        "Expected cash starts with opening float, adds paid cash sales and paid-in money, then subtracts cash refunds and paid-out money. Paid kitchen tickets count even while food is being made. Card payments are not drawer cash.",
+        "Fix count corrects a saved count; it does not reopen a shift or erase the earlier record. Older records may show a dash where information was not captured.",
+        "Approved changes to a closed sale refresh its saved expected cash and over or short. Completed-sales reports have their own sale-status definition; use the drawer figures to reconcile physical cash."
       ]
     },
     {
@@ -1251,7 +1370,7 @@
       "title": "Manage people and staff PINs",
       "route": "/dashboard/staff",
       "section": "People and business settings",
-      "summary": "Staff & PINs manages register identities, service staff or manager roles and four-digit PINs.",
+      "summary": "Staff & PINs manages the people who use the register, their roles and their four-digit PINs.",
       "steps": [
         "Open Manage, Team & setup, Staff & PINs. Choose Add Staff to create a new profile.",
         "Enter the name, choose Service Staff or Manager (SIC) as appropriate and set the required four-digit PIN.",
@@ -1365,7 +1484,7 @@
       "summary": "Ask helps authorized owners and managers understand their business data and find the right product feature.",
       "steps": [
         "Open a manager page and choose Ask. Start a new chat for a new topic, or use Chat history to return to an earlier conversation.",
-        "For product help, ask a clear question such as How do I turn off the kitchen?, Where can I correct a cash count?, or What is the difference between leaving and closing a register?.",
+        "For product help, ask How do I reconnect this register?, How do I turn off the kitchen?, Where can I correct a cash count?, or How do I recover a saved sale?.",
         "For business questions, give the period and what you want to know. On a report page, Ask can use the report being viewed and show useful report links or visual summaries.",
         "Open the suggested page link and follow the steps there. Check the dates, units and report definitions before making a business decision."
       ],
@@ -1393,8 +1512,9 @@
         "manager"
       ],
       "cautions": [
-        "Ask requires a connection and the correct owner or manager account and PIN access. It is not available to an ordinary service staff session.",
-        "Ask can explain and link to a feature; required approval and settings changes still happen in their screens. Never put passwords, PINs or payment-card details into chat."
+        "Ask requires internet and a currently verified owner or manager PIN. It is not available to an ordinary service staff session, including on a connected register.",
+        "Ask can explain and link to a feature; required approval and settings changes still happen in their screens. Never put passwords, PINs or payment-card details into chat.",
+        "Owners and managers using the same connected register account share that account’s chat history. Use a personal account for separate management conversations."
       ]
     },
     {
@@ -1471,7 +1591,8 @@
       "cautions": [
         "Only an owner or manager can change this shop setting. Keep each prepared till open during an outage; app reopening and new sign-in still need internet.",
         "Protection covers the till and its locally saved receipts. Kitchen tickets, reports and Ask catch up after reconnection.",
-        "Each sale retains its original account, shop, register session, price and time. A matching confirmed upload is required before it leaves the waiting list."
+        "Each sale retains its original account, shop, register session, price and time. A matching confirmed upload is required before it leaves the waiting list.",
+        "The device must stay powered and the prepared till must stay open. An internet interruption does not keep a device running through a power cut; use a charged phone or tablet, or a suitable backup power supply."
       ]
     },
     {
