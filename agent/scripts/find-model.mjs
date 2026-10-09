@@ -27,6 +27,9 @@ if (!REGION) {
 // Newer/more capable Sonnet families first. Anything sonnet-flavored but unrecognized
 // still gets tried, just last.
 const KNOWN_PRIORITY = [
+  /claude-sonnet-5-5/i,
+  /claude-sonnet-5/i,
+  // Sonnet 4.5 is legacy on Bedrock and stops serving 8 April 2027.
   /claude-sonnet-4-5/i,
   /claude-sonnet-4/i,
   /claude-3-7-sonnet/i,
@@ -61,9 +64,9 @@ async function probeConverse(runtimeClient, modelId) {
 }
 
 async function findInferenceProfileCandidatesFor(bedrockClient, modelId) {
-  // Try the registered cross-region inference profile that wraps this model first, then
-  // fall back to the common "us.<modelId>" cross-region profile naming convention — some
-  // accounts expose the profile under that id without it showing up in ListInferenceProfiles.
+  // Sonnet 5.5 is served through geo/global profiles, never in-Region, on bedrock-runtime.
+  // Try registered profiles first, then US and global naming conventions — some accounts
+  // expose these profile ids without them showing up in ListInferenceProfiles.
   const { inferenceProfileSummaries = [] } = await bedrockClient.send(
     new ListInferenceProfilesCommand({})
   );
@@ -71,7 +74,7 @@ async function findInferenceProfileCandidatesFor(bedrockClient, modelId) {
     .filter((profile) => (profile.models ?? []).some((m) => (m.modelArn ?? '').includes(modelId)))
     .map((profile) => profile.inferenceProfileId);
 
-  return [...new Set([...registered, `us.${modelId}`])];
+  return [...new Set([...registered, `us.${modelId}`, `global.${modelId}`])];
 }
 
 function upsertEnvVar(key, value) {

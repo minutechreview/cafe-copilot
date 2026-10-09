@@ -281,3 +281,39 @@ video, privately supplying demo access if desired, and authorizing the final pub
 submission. `ccloud` is not installed/authenticated on this machine, so the optional
 credential-bearing health probe remains owner-operated; it is not required for the working
 runtime.
+
+## 2026-10-09 — Bedrock Sonnet 5.5 migration ahead of Sonnet 4.5 retirement
+
+Migrated model discovery and current README/submission references to Claude Sonnet 5.5.
+Sonnet 5.5 and Sonnet 5 are preferred before legacy Sonnet 4.5; registered inference
+profiles are followed by deduplicated US and global fallbacks. The live [AWS Sonnet 4.5
+model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-5.md)
+confirms Legacy status and the 8 April 2027 end-of-life date. The [Sonnet 5.5 model
+card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5-5.html)
+confirms Converse/streaming support and geo/global profiles in `us-east-1`, with no
+in-Region `bedrock-runtime` access.
+
+Required post-merge operator configuration: `BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-5-5`
+for AWS account `606065959230`, region `us-east-1`; the global fallback is
+`global.anthropic.claude-sonnet-5-5`. Update the deployment secret/operator configuration
+and rebuild/redeploy the agent after merge, before 8 April 2027. Account entitlement and
+IAM access still require operator verification; no credentials, secrets, IAM, deployment,
+production configuration, or model invocations were changed or exercised in this migration.
+
+ConverseStream now preserves signed and redacted reasoning blocks for same-turn tool
+replay, without displaying or persisting them as reply text. Tool schemas remain fixed
+during reasoning replay, including the final iteration, while the six-call cap still
+prevents further tool execution. The request already omitted sampling controls, forced
+tool choice and beta headers; the existing token cap is an application budget, not a
+Sonnet 4.5 model limit. Focused regressions cover profile order/deduplication/global fallback,
+reasoning replay, reply isolation, and the iteration cap.
+
+Verification from the isolated clean-main checkout: `npm install` succeeded with no
+lockfile change; `npm test` passed 313 tests (246 agent, 52 memory, 15 web); `npm run lint`,
+`npm run build` and `git diff --check` passed. The memory migration harness used its
+isolated statement-level mode because no live CockroachDB instance was configured.
+The first discovery-test run exposed a mock-constructor reset issue, fixed before the
+complete passing rerun. npm reported 13 existing dependency vulnerabilities (4 moderate,
+7 high, 2 critical); dependency remediation is outside this migration. Existing journal
+entries and `STATUS-codex.md` are preserved. The repository has only a manually dispatched
+deployment workflow, with no automatic test workflow to run on this PR.

@@ -75,7 +75,7 @@ probe over the `ccloud` CLI (noun-verb syntax, JSON output) — wired and tested
 runtime since it needs `ccloud` installed and authenticated.
 
 **AWS runs the agent.** Amazon Bedrock's Converse Stream API drives the tool-calling loop with
-Claude Sonnet 4.5 — the agent plans, calls tools (`get_day_summary`, `get_staff_performance`,
+Claude Sonnet 5.5 — the agent plans, calls tools (`get_day_summary`, `get_staff_performance`,
 `get_waste_log`, `search_memory`, `save_note`, `list_notes`, `draft_purchase_order`), and
 streams its answer back token by token. Titan Text Embeddings v2 (also via Bedrock) produces
 the vectors behind `search_memory`. The whole backend runs as a single **AWS Lambda**
@@ -205,7 +205,7 @@ manager dashboard, talking to the Lambda Function URL over SSE.
 
 ## Built with
 
-React, Vite, Node.js, AWS Lambda, Amazon Bedrock (Claude Sonnet 4.5, Titan Text Embeddings v2),
+React, Vite, Node.js, AWS Lambda, Amazon Bedrock (Claude Sonnet 5.5, Titan Text Embeddings v2),
 CockroachDB, CockroachDB Vector Index, CockroachDB Agent Skills Repo, Supabase
 (PostgreSQL, Auth, Row-Level Security), Cloudflare Pages, esbuild, Server-Sent Events.
 

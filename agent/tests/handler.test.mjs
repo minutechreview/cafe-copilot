@@ -58,10 +58,16 @@ function textStream(chunks) {
  * optionally split across multiple delta chunks (to exercise buffering across chunks) and
  * optional narration text emitted first (to exercise delta-before-tool-call ordering).
  */
-function toolUseStream({ toolUseId, name, inputChunks, narration }) {
+function toolUseStream({ toolUseId, name, inputChunks, narration, reasoning }) {
   const chunks = Array.isArray(inputChunks) ? inputChunks : [inputChunks];
   const events = [];
   let index = 0;
+  if (reasoning) {
+    events.push({ contentBlockDelta: { contentBlockIndex: index, delta: { reasoningContent: { text: reasoning.text } } } });
+    events.push({ contentBlockDelta: { contentBlockIndex: index, delta: { reasoningContent: { signature: reasoning.signature } } } });
+    events.push({ contentBlockStop: { contentBlockIndex: index } });
+    index += 1;
+  }
   if (narration) {
     events.push({ contentBlockStart: { contentBlockIndex: index, start: {} } });
     events.push({ contentBlockDelta: { contentBlockIndex: index, delta: { text: narration } } });
@@ -592,6 +598,102 @@ describe('handler', () => {
         { type: 'delta', text: 'friend!' },
         { type: 'done', conversationId: 'abc-123', reply: 'Hello, friend!' },
       ]);
+    });
+
+    it('replays signed and redacted reasoning with tools without displaying or persisting thinking', async () => {
+      process.env.BEDROCK_MODEL_ID = 'us.anthropic.claude-sonnet-5-5';
+      getRecentMessagesMock.mockResolvedValueOnce([
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'How can I help?' },
+      ]);
+      sendMock.mockResolvedValueOnce(streamOf([
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { text: 'Check the ' } } } },
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { text: 'recorded day.' } } } },
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { signature: 'signature-' } } } },
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { signature: 'unchanged' } } } },
+        { contentBlockStop: { contentBlockIndex: 0 } },
+        { contentBlockDelta: { contentBlockIndex: 1, delta: { reasoningContent: { redactedContent: new Uint8Array([0, 255]) } } } },
+        { contentBlockDelta: { contentBlockIndex: 1, delta: { reasoningContent: { redactedContent: new Uint8Array([128, 1]) } } } },
+        { contentBlockStop: { contentBlockIndex: 1 } },
+        { contentBlockStart: { contentBlockIndex: 2, start: { toolUse: { toolUseId: 'call-1', name: 'get_day_summary' } } } },
+        { contentBlockDelta: { contentBlockIndex: 2, delta: { toolUse: { input: '{"date":"2026-07-04"}' } } } },
+        { contentBlockStop: { contentBlockIndex: 2 } },
+        { messageStop: { stopReason: 'tool_use' } },
+      ])).mockResolvedValueOnce(streamOf([
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { text: 'Private answer reasoning.' } } } },
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { signature: 'final-signature' } } } },
+        { contentBlockStop: { contentBlockIndex: 0 } },
+        { contentBlockDelta: { contentBlockIndex: 1, delta: { text: 'July 4th did LKR 32,400.' } } },
+        { contentBlockStop: { contentBlockIndex: 1 } },
+        { messageStop: { stopReason: 'end_turn' } },
+      ]));
+      executeToolMock.mockResolvedValueOnce({ kpis: { gross_sales: 32400 } });
+
+      const events = await runAndCollectEvents({ message: 'How was July 4th?', conversationId: 'abc-123' });
+
+      expect(events).toEqual([
+        { type: 'delta', text: 'July 4th did LKR 32,400.' },
+        { type: 'done', conversationId: 'abc-123', reply: 'July 4th did LKR 32,400.' },
+      ]);
+      const firstInput = sendMock.mock.calls[0][0].input;
+      expect(firstInput.modelId).toBe('us.anthropic.claude-sonnet-5-5');
+      expect(firstInput.inferenceConfig).toEqual({ maxTokens: 700 });
+      expect(firstInput).not.toHaveProperty('additionalModelRequestFields');
+      const secondInput = sendMock.mock.calls[1][0].input;
+      expect(secondInput.messages.slice(0, 3)).toEqual(firstInput.messages);
+      expect(secondInput.messages[3]).toEqual({
+        role: 'assistant',
+        content: [
+          { reasoningContent: { reasoningText: { text: 'Check the recorded day.', signature: 'signature-unchanged' } } },
+          { reasoningContent: { redactedContent: new Uint8Array([0, 255, 128, 1]) } },
+          { toolUse: { toolUseId: 'call-1', name: 'get_day_summary', input: { date: '2026-07-04' } } },
+        ],
+      });
+      expect(secondInput.messages[4].content[0].toolResult).toMatchObject({ toolUseId: 'call-1', status: 'success' });
+      expect(executeToolMock).toHaveBeenCalledTimes(1);
+      expect(appendMessageMock).toHaveBeenCalledTimes(2);
+      expect(appendMessageMock).toHaveBeenNthCalledWith(2, EXPECTED_DEFAULT_PRINCIPAL, {
+        conversationId: 'abc-123', role: 'assistant', content: 'July 4th did LKR 32,400.',
+      });
+    });
+
+    it('rejects a reasoning-only answer without exposing or storing its content', async () => {
+      sendMock.mockResolvedValueOnce(streamOf([
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { text: 'Private reasoning only.' } } } },
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { signature: 'signed' } } } },
+        { contentBlockStop: { contentBlockIndex: 0 } },
+        { messageStop: { stopReason: 'end_turn' } },
+      ]));
+
+      const events = await runAndCollectEvents({ message: 'Say hello' });
+
+      expect(events).toEqual([{ type: 'error', message: "The copilot couldn't answer just now. Please try again." }]);
+      expect(appendMessageMock).not.toHaveBeenCalled();
+    });
+
+    it.each(['end_turn', 'tool_use'])('keeps tools fixed for reasoning replay at the iteration cap with %s', async (stopReason) => {
+      const reasoning = { text: 'Private tool reasoning.', signature: 'unchanged-signature' };
+      for (let index = 0; index < 5; index += 1) {
+        sendMock.mockResolvedValueOnce(toolUseStream({
+          toolUseId: `call-${index}`, name: 'search_memory', inputChunks: '{"query":"x"}', reasoning,
+        }));
+      }
+      sendMock.mockResolvedValueOnce(stopReason === 'end_turn'
+        ? textStream('Answer with the available results.')
+        : toolUseStream({ toolUseId: 'call-5', name: 'search_memory', inputChunks: '{"query":"x"}', reasoning }));
+      executeToolMock.mockResolvedValue({ results: [] });
+
+      const events = await runAndCollectEvents({ message: 'Tell me everything' });
+
+      expect(sendMock).toHaveBeenCalledTimes(6);
+      expect(executeToolMock).toHaveBeenCalledTimes(5);
+      for (const [command] of sendMock.mock.calls) expect(command.input.toolConfig).toBe(FAKE_TOOL_CONFIG);
+      const finalInput = sendMock.mock.calls[5][0].input;
+      expect(finalInput.messages[1].content[0]).toEqual({ reasoningContent: { reasoningText: reasoning } });
+      expect(events.at(-1)).toMatchObject(stopReason === 'end_turn'
+        ? { type: 'done', reply: 'Answer with the available results.' }
+        : { type: 'error', message: "The copilot couldn't answer just now. Please try again." });
+      expect(appendMessageMock).toHaveBeenCalledTimes(stopReason === 'end_turn' ? 2 : 0);
     });
 
     it('forwards narration deltas emitted before a tool call, then buffers the tool input across chunks', async () => {

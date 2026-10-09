@@ -57,7 +57,7 @@ flowchart LR
 
     subgraph AWS
         FN[Lambda Function URL\nRESPONSE_STREAM, SSE]
-        BR[Amazon Bedrock\nClaude Sonnet 4.5 Converse + Titan v2 embeddings]
+        BR[Amazon Bedrock\nClaude Sonnet 5.5 Converse + Titan v2 embeddings]
     end
 
     CRDB[(CockroachDB\nconversations / notes / drafts /\nvector-indexed documents)]
@@ -122,7 +122,7 @@ SELECT id, doc_type, doc_date, content, metadata, embedding <=> $2 AS distance
 
 ## AWS services used
 
-- **Amazon Bedrock** runs the model: Claude Sonnet 4.5 via the Converse Stream API for the chat/tool loop, and Titan Text Embeddings v2 for the vectors behind `search_memory`. Model and embedding-model ids are discovered and pinned per-account by `npm run find-model` / `npm run find-embedding-model` rather than hardcoded, since model availability differs per AWS account and region.
+- **Amazon Bedrock** runs the model: Claude Sonnet 5.5 via the Converse Stream API for the chat/tool loop, and Titan Text Embeddings v2 for the vectors behind `search_memory`. Model and embedding-model ids are discovered and pinned per-account by `npm run find-model` / `npm run find-embedding-model` rather than hardcoded, since model availability differs per AWS account and region.
 - **AWS Lambda** hosts the agent backend (`nodejs22.x`, 512 MB, 55 s timeout, reserved concurrency 2) behind a public Function URL in `RESPONSE_STREAM` invoke mode, streaming Server-Sent Events. No static AWS credentials exist in the function's environment — Bedrock access comes solely from its IAM execution role, scoped to `bedrock:InvokeModel*` plus its own CloudWatch Logs group.
 
 ## Security posture
@@ -148,7 +148,7 @@ Create `.env.local` at the repo root (gitignored, never committed). See `docs/CO
 
 - `CRDB_CONNECTION_STRING` — your CockroachDB cluster connection string.
 - `AWS_REGION` — region for the local Bedrock client and deployment tooling; AWS auth follows the SDK's default credential provider chain.
-- `BEDROCK_MODEL_ID` — generate with `npm run find-model`, or set by hand.
+- `BEDROCK_MODEL_ID` — set to `us.anthropic.claude-sonnet-5-5` for the US geo profile in `us-east-1`; `global.anthropic.claude-sonnet-5-5` is the global fallback. Sonnet 5.5 requires a geo/global inference profile for Converse; it has no in-Region `bedrock-runtime` endpoint. `npm run find-model` can discover and probe available profiles (invocations incur model charges). After merging this migration, update the deployment's `BEDROCK_MODEL_ID` secret and redeploy the agent; this code change does not update a running Lambda. See the [AWS model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5-5.html).
 - `BEDROCK_EMBEDDING_MODEL_ID`, `EMBEDDING_DIM` — generate with `npm run find-embedding-model`.
 - `POS_SUPABASE_URL`, `POS_SUPABASE_ANON_KEY` — the POS staging project (the agent refuses to run against any other project).
 - `DEMO_BUSINESS_ID` — the seeded demo cafe's business id.
