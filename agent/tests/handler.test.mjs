@@ -9,6 +9,7 @@ const executeToolMock = vi.fn();
 const resolveBusinessContextMock = vi.fn();
 
 const FAKE_TOOL_CONFIG = { tools: [{ toolSpec: { name: 'fake_tool' } }] };
+const CLAUDE_5_5_MODEL_IDS = ['us.anthropic.claude-haiku-5-5', 'us.anthropic.claude-sonnet-5-5'];
 
 vi.mock('@aws-sdk/client-bedrock-runtime', () => {
   return {
@@ -58,10 +59,18 @@ function textStream(chunks) {
  * optionally split across multiple delta chunks (to exercise buffering across chunks) and
  * optional narration text emitted first (to exercise delta-before-tool-call ordering).
  */
-function toolUseStream({ toolUseId, name, inputChunks, narration }) {
+function toolUseStream({ toolUseId, name, inputChunks, narration, reasoning }) {
   const chunks = Array.isArray(inputChunks) ? inputChunks : [inputChunks];
   const events = [];
   let index = 0;
+  if (reasoning) {
+    if (typeof reasoning.text === 'string') {
+      events.push({ contentBlockDelta: { contentBlockIndex: index, delta: { reasoningContent: { text: reasoning.text } } } });
+    }
+    events.push({ contentBlockDelta: { contentBlockIndex: index, delta: { reasoningContent: { signature: reasoning.signature } } } });
+    events.push({ contentBlockStop: { contentBlockIndex: index } });
+    index += 1;
+  }
   if (narration) {
     events.push({ contentBlockStart: { contentBlockIndex: index, start: {} } });
     events.push({ contentBlockDelta: { contentBlockIndex: index, delta: { text: narration } } });
@@ -441,6 +450,24 @@ describe('handler', () => {
       expect(appendMessageMock).not.toHaveBeenCalled();
     });
 
+    it.each(CLAUDE_5_5_MODEL_IDS)('pins %s throughout a tool turn and never invokes a fallback on model errors', async (modelId) => {
+      process.env.BEDROCK_MODEL_ID = modelId;
+      sendMock.mockImplementationOnce(async () => {
+        process.env.BEDROCK_MODEL_ID = 'global.anthropic.claude-sonnet-5-5';
+        return toolUseStream({ toolUseId: 'call-1', name: 'search_memory', inputChunks: '{"query":"x"}' });
+      }).mockRejectedValueOnce(new Error('AccessDeniedException'))
+        .mockResolvedValueOnce(textStream('An unrequested fallback answer.'));
+      executeToolMock.mockResolvedValueOnce({ results: [] });
+
+      const events = await runAndCollectEvents({ message: 'Check recent summaries' });
+
+      expect(events).toEqual([{ type: 'error', message: "The copilot couldn't answer just now. Please try again." }]);
+      expect(sendMock).toHaveBeenCalledTimes(2);
+      expect(sendMock.mock.calls.map(([command]) => command.input.modelId)).toEqual([modelId, modelId]);
+      expect(executeToolMock).toHaveBeenCalledTimes(1);
+      expect(appendMessageMock).not.toHaveBeenCalled();
+    });
+
     it('throws a plain-language error when Bedrock returns no text content', async () => {
       sendMock.mockResolvedValueOnce(textStream(''));
 
@@ -592,6 +619,129 @@ describe('handler', () => {
         { type: 'delta', text: 'friend!' },
         { type: 'done', conversationId: 'abc-123', reply: 'Hello, friend!' },
       ]);
+    });
+
+    it.each(CLAUDE_5_5_MODEL_IDS)('replays signed and redacted reasoning with tools for %s without displaying or persisting thinking', async (modelId) => {
+      process.env.BEDROCK_MODEL_ID = modelId;
+      getRecentMessagesMock.mockResolvedValueOnce([
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'How can I help?' },
+      ]);
+      sendMock.mockResolvedValueOnce(streamOf([
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { text: 'Check the ' } } } },
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { text: 'recorded day.' } } } },
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { signature: 'signature-' } } } },
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { signature: 'unchanged' } } } },
+        { contentBlockStop: { contentBlockIndex: 0 } },
+        { contentBlockDelta: { contentBlockIndex: 1, delta: { reasoningContent: { redactedContent: new Uint8Array([0, 255]) } } } },
+        { contentBlockDelta: { contentBlockIndex: 1, delta: { reasoningContent: { redactedContent: new Uint8Array([128, 1]) } } } },
+        { contentBlockStop: { contentBlockIndex: 1 } },
+        { contentBlockStart: { contentBlockIndex: 2, start: { toolUse: { toolUseId: 'call-1', name: 'get_day_summary' } } } },
+        { contentBlockDelta: { contentBlockIndex: 2, delta: { toolUse: { input: '{"date":"2026-07-04"}' } } } },
+        { contentBlockStop: { contentBlockIndex: 2 } },
+        { messageStop: { stopReason: 'tool_use' } },
+      ])).mockResolvedValueOnce(streamOf([
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { text: 'Private answer reasoning.' } } } },
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { signature: 'final-signature' } } } },
+        { contentBlockStop: { contentBlockIndex: 0 } },
+        { contentBlockDelta: { contentBlockIndex: 1, delta: { text: 'July 4th did LKR 32,400.' } } },
+        { contentBlockStop: { contentBlockIndex: 1 } },
+        { messageStop: { stopReason: 'end_turn' } },
+      ]));
+      executeToolMock.mockResolvedValueOnce({ kpis: { gross_sales: 32400 } });
+
+      const events = await runAndCollectEvents({ message: 'How was July 4th?', conversationId: 'abc-123' });
+
+      expect(events).toEqual([
+        { type: 'delta', text: 'July 4th did LKR 32,400.' },
+        { type: 'done', conversationId: 'abc-123', reply: 'July 4th did LKR 32,400.' },
+      ]);
+      const firstInput = sendMock.mock.calls[0][0].input;
+      expect(firstInput.modelId).toBe(modelId);
+      expect(firstInput.inferenceConfig).toEqual({ maxTokens: 700 });
+      expect(firstInput).not.toHaveProperty('additionalModelRequestFields');
+      const secondInput = sendMock.mock.calls[1][0].input;
+      expect(secondInput.modelId).toBe(modelId);
+      expect(secondInput.messages.slice(0, 3)).toEqual(firstInput.messages);
+      expect(secondInput.messages[3]).toEqual({
+        role: 'assistant',
+        content: [
+          { reasoningContent: { reasoningText: { text: 'Check the recorded day.', signature: 'signature-unchanged' } } },
+          { reasoningContent: { redactedContent: new Uint8Array([0, 255, 128, 1]) } },
+          { toolUse: { toolUseId: 'call-1', name: 'get_day_summary', input: { date: '2026-07-04' } } },
+        ],
+      });
+      expect(secondInput.messages[4].content[0].toolResult).toMatchObject({ toolUseId: 'call-1', status: 'success' });
+      expect(executeToolMock).toHaveBeenCalledTimes(1);
+      expect(appendMessageMock).toHaveBeenCalledTimes(2);
+      expect(appendMessageMock).toHaveBeenNthCalledWith(2, EXPECTED_DEFAULT_PRINCIPAL, {
+        conversationId: 'abc-123', role: 'assistant', content: 'July 4th did LKR 32,400.',
+      });
+    });
+
+    it.each(CLAUDE_5_5_MODEL_IDS)('replays signature-only reasoning for %s with its required empty text field', async (modelId) => {
+      process.env.BEDROCK_MODEL_ID = modelId;
+      sendMock.mockResolvedValueOnce(toolUseStream({
+        toolUseId: 'call-1', name: 'search_memory', inputChunks: '{"query":"x"}',
+        reasoning: { signature: 'original-signature' },
+      })).mockResolvedValueOnce(textStream('No recorded summary matched.'));
+      executeToolMock.mockResolvedValueOnce({ results: [] });
+
+      const events = await runAndCollectEvents({ message: 'Check recent summaries' });
+
+      expect(sendMock.mock.calls[1][0].input.messages[1].content[0]).toEqual({
+        reasoningContent: { reasoningText: { text: '', signature: 'original-signature' } },
+      });
+      expect(events).toEqual([
+        { type: 'delta', text: 'No recorded summary matched.' },
+        { type: 'done', conversationId: 'new-conv-id', reply: 'No recorded summary matched.' },
+      ]);
+      expect(appendMessageMock).toHaveBeenNthCalledWith(2, EXPECTED_DEFAULT_PRINCIPAL, {
+        conversationId: 'new-conv-id', role: 'assistant', content: 'No recorded summary matched.',
+      });
+    });
+
+    it('rejects a reasoning-only answer without exposing or storing its content', async () => {
+      sendMock.mockResolvedValueOnce(streamOf([
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { text: 'Private reasoning only.' } } } },
+        { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { signature: 'signed' } } } },
+        { contentBlockStop: { contentBlockIndex: 0 } },
+        { messageStop: { stopReason: 'end_turn' } },
+      ]));
+
+      const events = await runAndCollectEvents({ message: 'Say hello' });
+
+      expect(events).toEqual([{ type: 'error', message: "The copilot couldn't answer just now. Please try again." }]);
+      expect(appendMessageMock).not.toHaveBeenCalled();
+    });
+
+    it.each(CLAUDE_5_5_MODEL_IDS.flatMap((modelId) => ['end_turn', 'tool_use'].map((stopReason) => [modelId, stopReason])))('keeps tools fixed for %s reasoning replay at the iteration cap with %s', async (modelId, stopReason) => {
+      process.env.BEDROCK_MODEL_ID = modelId;
+      const reasoning = { text: 'Private tool reasoning.', signature: 'unchanged-signature' };
+      for (let index = 0; index < 5; index += 1) {
+        sendMock.mockResolvedValueOnce(toolUseStream({
+          toolUseId: `call-${index}`, name: 'search_memory', inputChunks: '{"query":"x"}', reasoning,
+        }));
+      }
+      sendMock.mockResolvedValueOnce(stopReason === 'end_turn'
+        ? textStream('Answer with the available results.')
+        : toolUseStream({ toolUseId: 'call-5', name: 'search_memory', inputChunks: '{"query":"x"}', reasoning }));
+      executeToolMock.mockResolvedValue({ results: [] });
+
+      const events = await runAndCollectEvents({ message: 'Tell me everything' });
+
+      expect(sendMock).toHaveBeenCalledTimes(6);
+      expect(executeToolMock).toHaveBeenCalledTimes(5);
+      for (const [command] of sendMock.mock.calls) {
+        expect(command.input.toolConfig).toBe(FAKE_TOOL_CONFIG);
+        expect(command.input.modelId).toBe(modelId);
+      }
+      const finalInput = sendMock.mock.calls[5][0].input;
+      expect(finalInput.messages[1].content[0]).toEqual({ reasoningContent: { reasoningText: reasoning } });
+      expect(events.at(-1)).toMatchObject(stopReason === 'end_turn'
+        ? { type: 'done', reply: 'Answer with the available results.' }
+        : { type: 'error', message: "The copilot couldn't answer just now. Please try again." });
+      expect(appendMessageMock).toHaveBeenCalledTimes(stopReason === 'end_turn' ? 2 : 0);
     });
 
     it('forwards narration deltas emitted before a tool call, then buffers the tool input across chunks', async () => {

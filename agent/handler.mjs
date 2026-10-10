@@ -296,10 +296,10 @@ async function consumeStream(stream, onEvent) {
       const { contentBlockIndex, start } = event.contentBlockStart;
       blocks[contentBlockIndex] = start?.toolUse
         ? { kind: 'toolUse', toolUseId: start.toolUse.toolUseId, name: start.toolUse.name, inputText: '' }
-        : { kind: 'text', text: '' };
+        : { kind: 'unknown' };
     } else if (event.contentBlockDelta) {
       const { contentBlockIndex, delta } = event.contentBlockDelta;
-      const block = blocks[contentBlockIndex] ?? (blocks[contentBlockIndex] = { kind: 'text', text: '' });
+      const block = blocks[contentBlockIndex] ?? (blocks[contentBlockIndex] = { kind: 'unknown' });
       if (typeof delta?.text === 'string') {
         block.kind = 'text';
         block.text = (block.text ?? '') + delta.text;
@@ -307,6 +307,22 @@ async function consumeStream(stream, onEvent) {
       } else if (typeof delta?.toolUse?.input === 'string') {
         block.kind = 'toolUse';
         block.inputText = (block.inputText ?? '') + delta.toolUse.input;
+      } else if (delta?.reasoningContent) {
+        // Bedrock requires the original reasoning text/signature and redacted bytes on
+        // tool replay. Keep them in the model turn only, never in client text events.
+        const reasoning = delta.reasoningContent;
+        if (typeof reasoning.text === 'string' || typeof reasoning.signature === 'string') {
+          block.kind = 'reasoningText';
+          block.reasoningText ??= { text: '' };
+          if (typeof reasoning.text === 'string') block.reasoningText.text += reasoning.text;
+          if (typeof reasoning.signature === 'string') {
+            block.reasoningText.signature = (block.reasoningText.signature ?? '') + reasoning.signature;
+          }
+        } else if (reasoning.redactedContent instanceof Uint8Array) {
+          block.kind = 'redactedReasoning';
+          block.redactedChunks ??= [];
+          block.redactedChunks.push(reasoning.redactedContent);
+        }
       }
     } else if (event.messageStop) {
       stopReason = event.messageStop.stopReason;
@@ -328,7 +344,17 @@ async function consumeStream(stream, onEvent) {
         }
         return { toolUse: { toolUseId: block.toolUseId, name: block.name, input } };
       }
-      return { text: block.text ?? '' };
+      if (block.kind === 'reasoningText') return { reasoningContent: { reasoningText: block.reasoningText } };
+      if (block.kind === 'redactedReasoning') {
+        const redactedContent = new Uint8Array(block.redactedChunks.reduce((size, chunk) => size + chunk.length, 0));
+        let offset = 0;
+        for (const chunk of block.redactedChunks) {
+          redactedContent.set(chunk, offset);
+          offset += chunk.length;
+        }
+        return { reasoningContent: { redactedContent } };
+      }
+      return block.kind === 'text' ? { text: block.text } : null;
     })
     .filter(Boolean);
 
@@ -341,6 +367,9 @@ async function runAgentLoopStreaming({ systemPrompt, modelId, initialMessages, c
 
   for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration += 1) {
     const isFinalIteration = iteration === MAX_ITERATIONS;
+    // Claude 5.5 binds reasoning signatures to the original system/tools/messages.
+    // Keep tool schemas during replay; the final-iteration guard still prevents execution.
+    const replaysReasoning = messages.some((message) => message.content.some((block) => block.reasoningContent));
     if (signal?.aborted) throw new Error('Request deadline exceeded');
     const response = await client.send(
       new ConverseStreamCommand({
@@ -348,7 +377,7 @@ async function runAgentLoopStreaming({ systemPrompt, modelId, initialMessages, c
         system: [{ text: systemPrompt }],
         messages,
         inferenceConfig: { maxTokens },
-        ...(isFinalIteration ? {} : { toolConfig }),
+        ...(isFinalIteration && !replaysReasoning ? {} : { toolConfig }),
       }),
       { abortSignal: signal }
     );

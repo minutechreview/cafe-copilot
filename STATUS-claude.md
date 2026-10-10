@@ -281,3 +281,83 @@ video, privately supplying demo access if desired, and authorizing the final pub
 submission. `ccloud` is not installed/authenticated on this machine, so the optional
 credential-bearing health probe remains owner-operated; it is not required for the working
 runtime.
+
+## 2026-10-09 — Bedrock Sonnet 5.5 migration ahead of Sonnet 4.5 retirement
+
+Migrated model discovery and current README/submission references to Claude Sonnet 5.5.
+Sonnet 5.5 and Sonnet 5 are preferred before legacy Sonnet 4.5; registered inference
+profiles are followed by deduplicated US and global fallbacks. The live [AWS Sonnet 4.5
+model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-5.md)
+confirms Legacy status and the 8 April 2027 end-of-life date. The [Sonnet 5.5 model
+card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5-5.html)
+confirms Converse/streaming support and geo/global profiles in `us-east-1`, with no
+in-Region `bedrock-runtime` access.
+
+Required post-merge operator configuration: `BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-5-5`
+for AWS account `606065959230`, region `us-east-1`; the global fallback is
+`global.anthropic.claude-sonnet-5-5`. Update the deployment secret/operator configuration
+and rebuild/redeploy the agent after merge, before 8 April 2027. Account entitlement and
+IAM access still require operator verification; no credentials, secrets, IAM, deployment,
+production configuration, or model invocations were changed or exercised in this migration.
+
+ConverseStream now preserves signed and redacted reasoning blocks for same-turn tool
+replay, without displaying or persisting them as reply text. Tool schemas remain fixed
+during reasoning replay, including the final iteration, while the six-call cap still
+prevents further tool execution. The request already omitted sampling controls, forced
+tool choice and beta headers; the existing token cap is an application budget, not a
+Sonnet 4.5 model limit. Focused regressions cover profile order/deduplication/global fallback,
+reasoning replay, reply isolation, and the iteration cap.
+
+Verification from the isolated clean-main checkout: `npm install` succeeded with no
+lockfile change; `npm test` passed 313 tests (246 agent, 52 memory, 15 web); `npm run lint`,
+`npm run build` and `git diff --check` passed. The memory migration harness used its
+isolated statement-level mode because no live CockroachDB instance was configured.
+The first discovery-test run exposed a mock-constructor reset issue, fixed before the
+complete passing rerun. npm reported 13 existing dependency vulnerabilities (4 moderate,
+7 high, 2 critical); dependency remediation is outside this migration. Existing journal
+entries and `STATUS-codex.md` are preserved. The repository has only a manually dispatched
+deployment workflow, with no automatic test workflow to run on this PR.
+
+## 2026-10-10 — prefer Haiku 5.5 for the pending Bedrock migration
+
+The approved Haiku preference supersedes the Sonnet 5.5 target in the 9 October entry;
+that entry and every earlier journal entry remain unchanged. On the same branch and
+draft PR #2, discovery now prefers Haiku 5.5, then retains Sonnet 5.5 and the existing
+Sonnet alternatives. Only an explicit operator-run discovery probes alternatives and
+pins a model; runtime chat uses its configured id and never invokes a different model
+as an automatic fallback. The README/submission describe the migration target rather
+than claiming the deployed Lambda already uses Haiku.
+
+The [AWS Haiku 5.5 model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-5-5.html)
+confirms base id `anthropic.claude-haiku-5-5`, US profile
+`us.anthropic.claude-haiku-5-5` and global profile `global.anthropic.claude-haiku-5-5`,
+with geo/global availability in `us-east-1`, Converse and response streaming, and no
+in-Region `bedrock-runtime` access. AWS and Anthropic announced the release on 7 October.
+Adaptive thinking defaults on at medium effort; the existing request (maxTokens and
+automatic tools, no sampling controls, beta headers or assistant prefill) is compatible.
+Signed/redacted/signature-only reasoning is preserved for tool replay and excluded from
+displayed and persisted reply text; original tools and the six-call cap are retained.
+
+Pricing checked separately against [AWS's published pricing tables](https://aws.amazon.com/bedrock/pricing/)
+for US East (N. Virginia): Haiku 5.5 standard on-demand input/output rates per million
+tokens are $0.11/$0.55 for US geo and $0.10/$0.50 for global. AWS long-context rates are
+$0.55/$2.75 for geo and $0.50/$2.50 for global. [Anthropic API pricing](https://www.anthropic.com/claude-haiku-5-5)
+independently confirms $0.10/$0.50 for prompts at most 100k tokens and $0.50/$2.50 above
+100k. AWS labels its tiers standard/long context but does not explicitly confirm that
+boundary on its page; do not infer the AWS threshold from the API announcement. Published
+rates do not establish this account's entitlement, negotiated pricing or actual answer cost.
+
+Before rollout, separately authorize a bounded live evaluation of representative cafe
+questions and tool calls, checking answer quality, tool correctness and actual usage.
+Mock tests establish protocol behavior, not answer quality. After merge and evaluation,
+set `BEDROCK_MODEL_ID=us.anthropic.claude-haiku-5-5` in `us-east-1` and rebuild/redeploy
+before the Sonnet 4.5 retirement on 8 April 2027. The global Haiku profile and
+`us.anthropic.claude-sonnet-5-5` are explicit operator-selected alternatives, not runtime
+failover. No model invocations, credential/secret or IAM changes, merge, deployment or
+production changes were performed.
+
+Verification: `npm test` passed 323 tests (256 agent, 52 memory, 15 web), including
+6 discovery and 72 handler tests; `npm run lint`, `npm run build` and diff checks passed.
+The memory harness used isolated statement-level mode; live CockroachDB was unavailable.
+Existing dependencies/lockfile and `STATUS-codex.md` are unchanged. The repository still
+has only its manually dispatched deployment workflow; automatic CI is not configured.

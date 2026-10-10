@@ -57,7 +57,7 @@ flowchart LR
 
     subgraph AWS
         FN[Lambda Function URL\nRESPONSE_STREAM, SSE]
-        BR[Amazon Bedrock\nClaude Sonnet 4.5 Converse + Titan v2 embeddings]
+        BR[Amazon Bedrock\nClaude Haiku 5.5 migration target\nConverse + Titan v2 embeddings]
     end
 
     CRDB[(CockroachDB\nconversations / notes / drafts /\nvector-indexed documents)]
@@ -122,8 +122,29 @@ SELECT id, doc_type, doc_date, content, metadata, embedding <=> $2 AS distance
 
 ## AWS services used
 
-- **Amazon Bedrock** runs the model: Claude Sonnet 4.5 via the Converse Stream API for the chat/tool loop, and Titan Text Embeddings v2 for the vectors behind `search_memory`. Model and embedding-model ids are discovered and pinned per-account by `npm run find-model` / `npm run find-embedding-model` rather than hardcoded, since model availability differs per AWS account and region.
+- **Amazon Bedrock** runs the model: this migration targets Claude Haiku 5.5 via the Converse Stream API for the chat/tool loop, with Claude Sonnet 5.5 retained as an operator-selected alternative. Titan Text Embeddings v2 supplies the vectors behind `search_memory`. `npm run find-model` prefers Haiku 5.5, then Sonnet candidates; it probes availability and pins the first invokable id. This is an explicit operator action that incurs model charges. At runtime, chat uses only the configured `BEDROCK_MODEL_ID` and never retries another model on failure. Model and embedding-model ids are discovered and pinned per account rather than hardcoded, since availability differs per AWS account and region.
 - **AWS Lambda** hosts the agent backend (`nodejs22.x`, 512 MB, 55 s timeout, reserved concurrency 2) behind a public Function URL in `RESPONSE_STREAM` invoke mode, streaming Server-Sent Events. No static AWS credentials exist in the function's environment — Bedrock access comes solely from its IAM execution role, scoped to `bedrock:InvokeModel*` plus its own CloudWatch Logs group.
+
+Haiku 5.5 published input/output token rates, checked 10 October 2026, in USD per million
+tokens. AWS rates were verified separately from Anthropic's API rates using the
+[Bedrock pricing page](https://aws.amazon.com/bedrock/pricing/) and its published tables
+for US East (N. Virginia):
+
+| Service/profile | Published tier | Input | Output |
+| --- | --- | ---: | ---: |
+| Anthropic API | Prompts at most 100k tokens | $0.10 | $0.50 |
+| Anthropic API | Prompts above 100k tokens | $0.50 | $2.50 |
+| Bedrock US geo | Standard on-demand | $0.11 | $0.55 |
+| Bedrock US geo | Long context | $0.55 | $2.75 |
+| Bedrock global | Standard on-demand | $0.10 | $0.50 |
+| Bedrock global | Long context | $0.50 | $2.50 |
+
+The API threshold comes from [Anthropic's announcement](https://www.anthropic.com/claude-haiku-5-5).
+AWS's page labels its separate tiers standard and long context without explicitly stating
+the 100k boundary; verify the applicable AWS tier before estimating spend. These are
+published token rates, not an account-specific quote or a measured per-answer cost.
+Thinking tokens and additional tool turns affect total usage; account access and answer
+quality remain unverified until a bounded live evaluation.
 
 ## Security posture
 
@@ -148,7 +169,7 @@ Create `.env.local` at the repo root (gitignored, never committed). See `docs/CO
 
 - `CRDB_CONNECTION_STRING` — your CockroachDB cluster connection string.
 - `AWS_REGION` — region for the local Bedrock client and deployment tooling; AWS auth follows the SDK's default credential provider chain.
-- `BEDROCK_MODEL_ID` — generate with `npm run find-model`, or set by hand.
+- `BEDROCK_MODEL_ID` — preferred migration target: `us.anthropic.claude-haiku-5-5` for the US geo profile in `us-east-1`. `global.anthropic.claude-haiku-5-5` is a global alternative when that routing is acceptable; `us.anthropic.claude-sonnet-5-5` remains a compatible manually selected Sonnet option. Haiku 5.5 and Sonnet 5.5 require geo/global profiles for Converse, with no in-Region `bedrock-runtime` endpoint. See the [AWS Haiku model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-5-5.html).
 - `BEDROCK_EMBEDDING_MODEL_ID`, `EMBEDDING_DIM` — generate with `npm run find-embedding-model`.
 - `POS_SUPABASE_URL`, `POS_SUPABASE_ANON_KEY` — the POS staging project (the agent refuses to run against any other project).
 - `DEMO_BUSINESS_ID` — the seeded demo cafe's business id.
@@ -157,6 +178,13 @@ Create `.env.local` at the repo root (gitignored, never committed). See `docs/CO
 - `DEMO_OWNER_PIN`, `DEMO_MANAGER_PIN`, `DEMO_STAFF_PIN_1`, `DEMO_STAFF_PIN_2` — four distinct
   four-digit values required only when creating or recreating the fictional staging café.
   Keep them in `.env.local`; do not put their values in documentation or commits.
+
+Before making Haiku 5.5 the deployed default, verify account entitlement, profile access and
+answer quality through a separately authorized, bounded live evaluation of representative
+cafe questions and tool calls. Mock tests verify protocol behavior, not model answer quality.
+After merge and evaluation, update the deployment's `BEDROCK_MODEL_ID` secret/operator
+configuration and rebuild/redeploy the agent before Sonnet 4.5 stops serving on 8 April 2027.
+This code change does not update a running Lambda.
 
 Apply the CockroachDB schema (idempotent, safe to re-run):
 
