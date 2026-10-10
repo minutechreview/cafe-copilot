@@ -31,14 +31,19 @@ vi.mock('@aws-sdk/client-bedrock-runtime', () => ({
   },
 }));
 
+const HAIKU_55 = 'anthropic.claude-haiku-5-5';
 const SONNET_55 = 'anthropic.claude-sonnet-5-5';
 const SONNET_5 = 'anthropic.claude-sonnet-5';
 const SONNET_45 = 'anthropic.claude-sonnet-4-5-20250929-v1:0';
 
-function setCatalog(modelIds, profiles = []) {
+function setCatalog(models, profiles = []) {
   mocks.bedrockSend.mockImplementation(async ({ operation }) => {
     if (operation === 'models') {
-      return { modelSummaries: modelIds.map((modelId) => ({ modelId, providerName: 'Anthropic' })) };
+      return {
+        modelSummaries: models.map((model) => typeof model === 'string'
+          ? { modelId: model, providerName: 'Anthropic' }
+          : model),
+      };
     }
     if (operation === 'profiles') return { inferenceProfileSummaries: profiles };
     throw new Error(`Unexpected Bedrock discovery operation: ${operation}`);
@@ -73,7 +78,14 @@ function attemptedModelIds() {
   return mocks.runtimeSend.mock.calls.map(([command]) => command.input.modelId);
 }
 
-describe('Bedrock Sonnet model discovery', () => {
+function listedModelIds() {
+  return console.log.mock.calls
+    .map(([message]) => message)
+    .filter((message) => message.startsWith('  - '))
+    .map((message) => message.slice('  - '.length));
+}
+
+describe('Bedrock Claude model discovery', () => {
   beforeEach(() => {
     vi.resetModules();
     for (const mock of Object.values(mocks)) mock.mockReset();
@@ -89,6 +101,71 @@ describe('Bedrock Sonnet model discovery', () => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
     expect(exitCalls).toEqual([]);
+  });
+
+  it('prefers Haiku 5.5 over the Sonnet families and writes its US profile from a scrambled catalog', async () => {
+    const usId = `us.${HAIKU_55}`;
+    setCatalog([SONNET_45, SONNET_55, SONNET_5, HAIKU_55]);
+    acceptOnly(usId);
+
+    await runDiscovery();
+
+    expect(listedModelIds()).toEqual([HAIKU_55, SONNET_55, SONNET_5, SONNET_45]);
+    expect(attemptedModelIds()).toEqual([HAIKU_55, usId]);
+    expect(mocks.writeFileSync).toHaveBeenCalledWith(
+      expect.stringMatching(/\.env\.local$/),
+      `BEDROCK_MODEL_ID=${usId}\n`,
+    );
+  });
+
+  it('selects the Haiku 5.5 global fallback after direct and deduplicated registered US attempts fail', async () => {
+    const usId = `us.${HAIKU_55}`;
+    const globalId = `global.${HAIKU_55}`;
+    setCatalog([SONNET_55, HAIKU_55], [
+      profile(usId, HAIKU_55),
+      profile(usId, HAIKU_55),
+      profile('unrelated-sonnet-profile', SONNET_55),
+    ]);
+    acceptOnly(globalId);
+
+    await runDiscovery();
+
+    expect(attemptedModelIds()).toEqual([HAIKU_55, usId, globalId]);
+    expect(mocks.writeFileSync).toHaveBeenCalledWith(
+      expect.stringMatching(/\.env\.local$/),
+      `BEDROCK_MODEL_ID=${globalId}\n`,
+    );
+  });
+
+  it('retains Sonnet 5.5 when Haiku 5.5 is unavailable and excludes older Haiku, Opus, and other providers', async () => {
+    const haikuUsId = `us.${HAIKU_55}`;
+    const haikuGlobalId = `global.${HAIKU_55}`;
+    const sonnetUsId = `us.${SONNET_55}`;
+    setCatalog([
+      'anthropic.claude-haiku-4-5-20251001-v1:0',
+      { modelId: 'other.claude-haiku-5-5', providerName: 'Other provider' },
+      SONNET_55,
+      'anthropic.claude-opus-5-5',
+      { modelId: 'other.claude-sonnet-5-5', providerName: 'Other provider' },
+      HAIKU_55,
+    ], [
+      profile(haikuUsId, HAIKU_55),
+      profile(haikuUsId, HAIKU_55),
+      profile(haikuGlobalId, HAIKU_55),
+      profile(haikuGlobalId, HAIKU_55),
+    ]);
+    acceptOnly(sonnetUsId);
+
+    await runDiscovery();
+
+    expect(listedModelIds()).toEqual([HAIKU_55, SONNET_55]);
+    expect(attemptedModelIds()).toEqual([
+      HAIKU_55, haikuUsId, haikuGlobalId, SONNET_55, sonnetUsId,
+    ]);
+    expect(mocks.writeFileSync).toHaveBeenCalledWith(
+      expect.stringMatching(/\.env\.local$/),
+      `BEDROCK_MODEL_ID=${sonnetUsId}\n`,
+    );
   });
 
   it('tries Sonnet 5.5, then Sonnet 5, then legacy Sonnet 4.5 regardless of catalog order', async () => {

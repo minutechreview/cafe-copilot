@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Discovers the best available Claude Sonnet model on this AWS account's Bedrock access,
+// Discovers the preferred available Claude model on this AWS account's Bedrock access,
 // verifies it is actually invokable (some accounts only allow a model through a
 // cross-region inference profile, not the plain model id), and records the winning id as
 // BEDROCK_MODEL_ID in .env.local. Run with: npm run find-model --workspace=agent
@@ -24,9 +24,11 @@ if (!REGION) {
   process.exit(1);
 }
 
-// Newer/more capable Sonnet families first. Anything sonnet-flavored but unrecognized
-// still gets tried, just last.
+// Prefer Haiku 5.5 for cost, then retain the existing Sonnet priority.
+// Unrecognized Sonnet models still get tried last. This operator-run discovery helper
+// probes models (incurring charges); the chat handler never switches models automatically.
 const KNOWN_PRIORITY = [
+  /claude-haiku-5-5/i,
   /claude-sonnet-5-5/i,
   /claude-sonnet-5/i,
   // Sonnet 4.5 is legacy on Bedrock and stops serving 8 April 2027.
@@ -64,7 +66,7 @@ async function probeConverse(runtimeClient, modelId) {
 }
 
 async function findInferenceProfileCandidatesFor(bedrockClient, modelId) {
-  // Sonnet 5.5 is served through geo/global profiles, never in-Region, on bedrock-runtime.
+  // Haiku 5.5 and Sonnet 5.5 require geo/global profiles on bedrock-runtime, never in-Region.
   // Try registered profiles first, then US and global naming conventions — some accounts
   // expose these profile ids without them showing up in ListInferenceProfiles.
   const { inferenceProfileSummaries = [] } = await bedrockClient.send(
@@ -94,16 +96,16 @@ async function main() {
     .filter(
       (m) =>
         /anthropic/i.test(m.providerName ?? '') &&
-        /sonnet/i.test(m.modelId ?? m.modelName ?? '')
+        /claude-haiku-5-5|sonnet/i.test(m.modelId ?? m.modelName ?? '')
     )
     .sort(compareCandidates);
 
   if (candidates.length === 0) {
-    console.error('No Anthropic Sonnet models are visible on this account/region.');
+    console.error('No Anthropic Haiku 5.5 or Sonnet models are visible on this account/region.');
     process.exit(1);
   }
 
-  console.log(`Found ${candidates.length} candidate Sonnet model(s), trying in priority order:`);
+  console.log(`Found ${candidates.length} candidate Claude model(s), trying in priority order:`);
   for (const c of candidates) console.log(`  - ${c.modelId}`);
 
   for (const candidate of candidates) {
@@ -133,7 +135,7 @@ async function main() {
     }
   }
 
-  console.error('\nNone of the candidate Sonnet models were invokable on this account.');
+  console.error('\nNone of the candidate Claude models were invokable on this account.');
   process.exit(1);
 }
 

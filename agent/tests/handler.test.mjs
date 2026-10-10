@@ -9,6 +9,7 @@ const executeToolMock = vi.fn();
 const resolveBusinessContextMock = vi.fn();
 
 const FAKE_TOOL_CONFIG = { tools: [{ toolSpec: { name: 'fake_tool' } }] };
+const CLAUDE_5_5_MODEL_IDS = ['us.anthropic.claude-haiku-5-5', 'us.anthropic.claude-sonnet-5-5'];
 
 vi.mock('@aws-sdk/client-bedrock-runtime', () => {
   return {
@@ -63,7 +64,9 @@ function toolUseStream({ toolUseId, name, inputChunks, narration, reasoning }) {
   const events = [];
   let index = 0;
   if (reasoning) {
-    events.push({ contentBlockDelta: { contentBlockIndex: index, delta: { reasoningContent: { text: reasoning.text } } } });
+    if (typeof reasoning.text === 'string') {
+      events.push({ contentBlockDelta: { contentBlockIndex: index, delta: { reasoningContent: { text: reasoning.text } } } });
+    }
     events.push({ contentBlockDelta: { contentBlockIndex: index, delta: { reasoningContent: { signature: reasoning.signature } } } });
     events.push({ contentBlockStop: { contentBlockIndex: index } });
     index += 1;
@@ -447,6 +450,24 @@ describe('handler', () => {
       expect(appendMessageMock).not.toHaveBeenCalled();
     });
 
+    it.each(CLAUDE_5_5_MODEL_IDS)('pins %s throughout a tool turn and never invokes a fallback on model errors', async (modelId) => {
+      process.env.BEDROCK_MODEL_ID = modelId;
+      sendMock.mockImplementationOnce(async () => {
+        process.env.BEDROCK_MODEL_ID = 'global.anthropic.claude-sonnet-5-5';
+        return toolUseStream({ toolUseId: 'call-1', name: 'search_memory', inputChunks: '{"query":"x"}' });
+      }).mockRejectedValueOnce(new Error('AccessDeniedException'))
+        .mockResolvedValueOnce(textStream('An unrequested fallback answer.'));
+      executeToolMock.mockResolvedValueOnce({ results: [] });
+
+      const events = await runAndCollectEvents({ message: 'Check recent summaries' });
+
+      expect(events).toEqual([{ type: 'error', message: "The copilot couldn't answer just now. Please try again." }]);
+      expect(sendMock).toHaveBeenCalledTimes(2);
+      expect(sendMock.mock.calls.map(([command]) => command.input.modelId)).toEqual([modelId, modelId]);
+      expect(executeToolMock).toHaveBeenCalledTimes(1);
+      expect(appendMessageMock).not.toHaveBeenCalled();
+    });
+
     it('throws a plain-language error when Bedrock returns no text content', async () => {
       sendMock.mockResolvedValueOnce(textStream(''));
 
@@ -600,8 +621,8 @@ describe('handler', () => {
       ]);
     });
 
-    it('replays signed and redacted reasoning with tools without displaying or persisting thinking', async () => {
-      process.env.BEDROCK_MODEL_ID = 'us.anthropic.claude-sonnet-5-5';
+    it.each(CLAUDE_5_5_MODEL_IDS)('replays signed and redacted reasoning with tools for %s without displaying or persisting thinking', async (modelId) => {
+      process.env.BEDROCK_MODEL_ID = modelId;
       getRecentMessagesMock.mockResolvedValueOnce([
         { role: 'user', content: 'Hello' },
         { role: 'assistant', content: 'How can I help?' },
@@ -636,10 +657,11 @@ describe('handler', () => {
         { type: 'done', conversationId: 'abc-123', reply: 'July 4th did LKR 32,400.' },
       ]);
       const firstInput = sendMock.mock.calls[0][0].input;
-      expect(firstInput.modelId).toBe('us.anthropic.claude-sonnet-5-5');
+      expect(firstInput.modelId).toBe(modelId);
       expect(firstInput.inferenceConfig).toEqual({ maxTokens: 700 });
       expect(firstInput).not.toHaveProperty('additionalModelRequestFields');
       const secondInput = sendMock.mock.calls[1][0].input;
+      expect(secondInput.modelId).toBe(modelId);
       expect(secondInput.messages.slice(0, 3)).toEqual(firstInput.messages);
       expect(secondInput.messages[3]).toEqual({
         role: 'assistant',
@@ -657,6 +679,28 @@ describe('handler', () => {
       });
     });
 
+    it.each(CLAUDE_5_5_MODEL_IDS)('replays signature-only reasoning for %s with its required empty text field', async (modelId) => {
+      process.env.BEDROCK_MODEL_ID = modelId;
+      sendMock.mockResolvedValueOnce(toolUseStream({
+        toolUseId: 'call-1', name: 'search_memory', inputChunks: '{"query":"x"}',
+        reasoning: { signature: 'original-signature' },
+      })).mockResolvedValueOnce(textStream('No recorded summary matched.'));
+      executeToolMock.mockResolvedValueOnce({ results: [] });
+
+      const events = await runAndCollectEvents({ message: 'Check recent summaries' });
+
+      expect(sendMock.mock.calls[1][0].input.messages[1].content[0]).toEqual({
+        reasoningContent: { reasoningText: { text: '', signature: 'original-signature' } },
+      });
+      expect(events).toEqual([
+        { type: 'delta', text: 'No recorded summary matched.' },
+        { type: 'done', conversationId: 'new-conv-id', reply: 'No recorded summary matched.' },
+      ]);
+      expect(appendMessageMock).toHaveBeenNthCalledWith(2, EXPECTED_DEFAULT_PRINCIPAL, {
+        conversationId: 'new-conv-id', role: 'assistant', content: 'No recorded summary matched.',
+      });
+    });
+
     it('rejects a reasoning-only answer without exposing or storing its content', async () => {
       sendMock.mockResolvedValueOnce(streamOf([
         { contentBlockDelta: { contentBlockIndex: 0, delta: { reasoningContent: { text: 'Private reasoning only.' } } } },
@@ -671,7 +715,8 @@ describe('handler', () => {
       expect(appendMessageMock).not.toHaveBeenCalled();
     });
 
-    it.each(['end_turn', 'tool_use'])('keeps tools fixed for reasoning replay at the iteration cap with %s', async (stopReason) => {
+    it.each(CLAUDE_5_5_MODEL_IDS.flatMap((modelId) => ['end_turn', 'tool_use'].map((stopReason) => [modelId, stopReason])))('keeps tools fixed for %s reasoning replay at the iteration cap with %s', async (modelId, stopReason) => {
+      process.env.BEDROCK_MODEL_ID = modelId;
       const reasoning = { text: 'Private tool reasoning.', signature: 'unchanged-signature' };
       for (let index = 0; index < 5; index += 1) {
         sendMock.mockResolvedValueOnce(toolUseStream({
@@ -687,7 +732,10 @@ describe('handler', () => {
 
       expect(sendMock).toHaveBeenCalledTimes(6);
       expect(executeToolMock).toHaveBeenCalledTimes(5);
-      for (const [command] of sendMock.mock.calls) expect(command.input.toolConfig).toBe(FAKE_TOOL_CONFIG);
+      for (const [command] of sendMock.mock.calls) {
+        expect(command.input.toolConfig).toBe(FAKE_TOOL_CONFIG);
+        expect(command.input.modelId).toBe(modelId);
+      }
       const finalInput = sendMock.mock.calls[5][0].input;
       expect(finalInput.messages[1].content[0]).toEqual({ reasoningContent: { reasoningText: reasoning } });
       expect(events.at(-1)).toMatchObject(stopReason === 'end_turn'

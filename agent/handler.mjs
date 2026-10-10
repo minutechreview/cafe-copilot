@@ -367,7 +367,7 @@ async function runAgentLoopStreaming({ systemPrompt, modelId, initialMessages, c
 
   for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration += 1) {
     const isFinalIteration = iteration === MAX_ITERATIONS;
-    // Sonnet 5.5 binds reasoning signatures to the original system/tools/messages.
+    // Claude 5.5 binds reasoning signatures to the original system/tools/messages.
     // Keep tool schemas during replay; the final-iteration guard still prevents execution.
     const replaysReasoning = messages.some((message) => message.content.some((block) => block.reasoningContent));
     if (signal?.aborted) throw new Error('Request deadline exceeded');
